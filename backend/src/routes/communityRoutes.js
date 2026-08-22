@@ -11,11 +11,10 @@ import {
   deleteComment,
   toggleCommentLike,
 } from '../controllers/communityController.js';
-import { protect, requireVerified } from '../middleware/authMiddleware.js';
+import { protect } from '../middleware/authMiddleware.js';
 
 const router = express.Router();
 
-/** Chống spam đăng bài — 10 bài mỗi giờ là quá đủ cho người dùng thật */
 const writeLimiter = rateLimit({
   windowMs: 60 * 60 * 1000,
   max: 10,
@@ -28,7 +27,6 @@ const writeLimiter = rateLimit({
   legacyHeaders: false,
 });
 
-/** Bình luận thoáng hơn, nhưng vẫn có trần */
 const commentLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 30,
@@ -41,22 +39,32 @@ const commentLimiter = rateLimit({
   legacyHeaders: false,
 });
 
-// Mọi route đều cần đăng nhập
 router.use(protect);
 
-// ===== ĐỌC =====
-// Guest xem được bảng tin global; scope=university tự kiểm tra bên trong controller
+/**
+ * KHÔNG dùng requireVerified ở tầng route nữa.
+ *
+ * Quyền phụ thuộc vào PHẠM VI của từng bài, không phải vào endpoint:
+ *   - Bài toàn quốc: ai đăng nhập cũng đọc và tham gia được
+ *   - Bài của trường: bắt buộc đã xác thực và đúng trường
+ *
+ * Chặn cứng ở đây sẽ khiến bảng tin toàn quốc trống vĩnh viễn,
+ * vì chỉ người đã xác thực mới đăng được — mà họ thì đăng vào
+ * bảng tin trường mình. Controller tự kiểm tra từng trường hợp.
+ */
+
+// Đọc
 router.get('/feed', getFeed);
 router.get('/posts/:id', getPost);
 router.get('/posts/:id/comments', getComments);
 
-// ===== VIẾT — bắt buộc đã xác thực email trường =====
-router.post('/posts', requireVerified, writeLimiter, createPost);
-router.delete('/posts/:id', requireVerified, deletePost);
-router.post('/posts/:id/like', requireVerified, togglePostLike);
+// Viết
+router.post('/posts', writeLimiter, createPost);
+router.delete('/posts/:id', deletePost);
+router.post('/posts/:id/like', togglePostLike);
 
-router.post('/posts/:id/comments', requireVerified, commentLimiter, createComment);
-router.delete('/comments/:id', requireVerified, deleteComment);
-router.post('/comments/:id/like', requireVerified, toggleCommentLike);
+router.post('/posts/:id/comments', commentLimiter, createComment);
+router.delete('/comments/:id', deleteComment);
+router.post('/comments/:id/like', toggleCommentLike);
 
 export default router;

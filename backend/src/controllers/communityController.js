@@ -7,7 +7,8 @@ import { logger } from '../utils/logger.js';
 
 const MAX_LIMIT = 30;
 
-// ===== VALIDATION =====
+/** Người chưa xác thực chỉ được đăng giới hạn ở bảng tin toàn quốc */
+const GUEST_POSTS_PER_HOUR = 3;
 
 const createPostSchema = Joi.object({
   title: Joi.string().trim().min(2).max(200).required().messages({
@@ -39,10 +40,44 @@ const isModerator = (user) =>
 const badId = (res) =>
   res.status(400).json({ status: 'error', code: 'INVALID_ID', message: 'ID không hợp lệ' });
 
+const userUniversityId = (user) => String(user.university?._id || user.university || '');
+
+/**
+ * Kiểm tra quyền đọc một bài viết.
+ *
+ * Bài toàn quốc: ai đăng nhập cũng đọc được, kể cả chưa xác thực.
+ * Bài của trường: bắt buộc đã xác thực VÀ đúng trường đó.
+ *
+ * Trả null nếu được phép, hoặc object lỗi nếu không.
+ */
+const postAccessError = (post, user) => {
+  if (post.communityType !== 'university') return null;
+
+  if (user.verificationStatus !== 'verified') {
+    return {
+      status: 403,
+      code: 'UNIVERSITY_VERIFICATION_REQUIRED',
+      message: 'Bạn cần xác thực email trường để xem nội dung này',
+      currentStatus: user.verificationStatus,
+    };
+  }
+
+  const postUni = String(post.university?._id || post.university || '');
+  if (userUniversityId(user) !== postUni) {
+    return {
+      status: 403,
+      code: 'WRONG_UNIVERSITY',
+      message: 'Nội dung này chỉ dành cho sinh viên trường khác',
+    };
+  }
+
+  return null;
+};
+
 /**
  * GET /api/community/feed
- * scope=university → bảng tin riêng của trường (bắt buộc đã xác thực)
- * scope=global     → bảng tin liên trường (guest xem được)
+ * scope=global     → bảng tin liên trường, mở cho mọi người đã đăng nhập
+ * scope=university → bảng tin riêng của trường, bắt buộc đã xác thực
  */
 export const getFeed = async (req, res) => {
   const scope = req.query.scope === 'global' ? 'global' : 'university';
@@ -61,7 +96,6 @@ export const getFeed = async (req, res) => {
         currentStatus: req.user.verificationStatus,
       });
     }
-    // Chỉ thấy bài của đúng trường mình
     filter.university = req.user.university?._id || req.user.university;
     filter.communityType = 'university';
   } else {
@@ -76,17 +110,15 @@ export const getFeed = async (req, res) => {
       .skip((page - 1) * limit)
       .limit(limit)
       .populate('university', 'shortName name')
-      .lean({ virtuals: false }),
+      .lean(),
     Post.countDocuments(filter),
   ]);
 
-  // Nạp nickname cho những bài KHÔNG ẩn danh.
-  // Bài ẩn danh không đọc author, nên không có đường rò rỉ.
+  // Chỉ nạp tác giả cho bài công khai — bài ẩn danh không đi qua nhánh này
   const publicPosts = posts.filter((p) => !p.isAnonymous);
   if (publicPosts.length) {
-    const ids = publicPosts.map((p) => p.author).filter(Boolean);
     const User = mongoose.model('User');
-    const authors = await User.find({ _id: { $in: ids } })
+    const authors = await User.find({ _id: { $in: publicPosts.map((p) => p.author).filter(Boolean) } })
       .select('nickname profilePhoto')
       .lean();
     const byId = new Map(authors.map((a) => [String(a._id), a]));
@@ -95,7 +127,6 @@ export const getFeed = async (req, res) => {
     });
   }
 
-  // Xác định bài nào người xem đã thích
   const likedIds = await Post.find({
     _id: { $in: posts.map((p) => p._id) },
     likes: req.user._id,
@@ -107,6 +138,7 @@ export const getFeed = async (req, res) => {
   res.status(200).json({
     status: 'success',
     data: {
+      scope,
       posts: serializePosts(posts, req.user._id, {
         likedPostIds,
         isModerator: isModerator(req.user),
@@ -124,6 +156,7 @@ export const getFeed = async (req, res) => {
 
 /**
  * POST /api/community/posts
+ * Guest đăng được ở bảng tin toàn quốc, nhưng có hạn mức chặt hơn.
  */
 export const createPost = async (req, res) => {
   const { error, value } = createPostSchema.validate(req.body, { abortEarly: false });
@@ -136,14 +169,33 @@ export const createPost = async (req, res) => {
     });
   }
 
+  const verified = req.user.verificationStatus === 'verified';
   const universityId = req.user.university?._id || req.user.university;
 
-  if (value.communityType === 'university' && !universityId) {
-    return res.status(403).json({
-      status: 'error',
-      code: 'UNIVERSITY_VERIFICATION_REQUIRED',
-      message: 'Bạn cần xác thực email trường để đăng bài trong cộng đồng trường',
+  if (value.communityType === 'university') {
+    if (!verified || !universityId) {
+      return res.status(403).json({
+        status: 'error',
+        code: 'UNIVERSITY_VERIFICATION_REQUIRED',
+        message: 'Bạn cần xác thực email trường để đăng bài trong cộng đồng trường',
+      });
+    }
+  } else if (!verified) {
+    // Tài khoản chưa xác thực không có gì ràng buộc danh tính,
+    // nên siết chặt hơn để tránh spam ở bảng tin mở
+    const anHourAgo = new Date(Date.now() - 60 * 60 * 1000);
+    const recent = await Post.countDocuments({
+      author: req.user._id,
+      createdAt: { $gte: anHourAgo },
     });
+
+    if (recent >= GUEST_POSTS_PER_HOUR) {
+      return res.status(429).json({
+        status: 'error',
+        code: 'GUEST_POST_LIMIT',
+        message: `Tài khoản chưa xác thực chỉ đăng được ${GUEST_POSTS_PER_HOUR} bài mỗi giờ. Xác thực email trường để bỏ giới hạn này.`,
+      });
+    }
   }
 
   const post = await Post.create({
@@ -153,7 +205,7 @@ export const createPost = async (req, res) => {
     lastActivityAt: new Date(),
   });
 
-  logger.info(`Bài mới: ${post._id} (ẩn danh: ${post.isAnonymous})`);
+  logger.info(`Bài mới: ${post._id} (${value.communityType}, ẩn danh: ${post.isAnonymous})`);
 
   const populated = await Post.findById(post._id).populate('university', 'shortName name');
 
@@ -183,21 +235,13 @@ export const getPost = async (req, res) => {
     });
   }
 
-  // Bài của trường chỉ người cùng trường đã xác thực mới xem được
-  if (post.communityType === 'university') {
-    const mine = String(req.user.university?._id || req.user.university);
-    if (req.user.verificationStatus !== 'verified' || mine !== String(post.university?._id)) {
-      return res.status(403).json({
-        status: 'error',
-        code: 'UNIVERSITY_VERIFICATION_REQUIRED',
-        message: 'Bài viết này chỉ dành cho sinh viên đã xác thực của trường',
-      });
-    }
+  const denied = postAccessError(post, req.user);
+  if (denied) {
+    return res.status(denied.status).json({ status: 'error', ...denied });
   }
 
   await Post.updateOne({ _id: post._id }, { $inc: { views: 1 } });
 
-  // Chỉ nạp tác giả khi bài công khai
   if (!post.isAnonymous) {
     await post.populate({ path: 'author', select: 'nickname profilePhoto' });
   }
@@ -221,7 +265,7 @@ export const getPost = async (req, res) => {
 export const togglePostLike = async (req, res) => {
   if (!mongoose.isValidObjectId(req.params.id)) return badId(res);
 
-  const post = await Post.findOne({ _id: req.params.id, isDeleted: false }).select('+likes');
+  const post = await Post.findOne({ _id: req.params.id, isDeleted: false });
   if (!post) {
     return res.status(404).json({
       status: 'error',
@@ -230,9 +274,12 @@ export const togglePostLike = async (req, res) => {
     });
   }
 
+  const denied = postAccessError(post, req.user);
+  if (denied) return res.status(denied.status).json({ status: 'error', ...denied });
+
   const already = await Post.exists({ _id: post._id, likes: req.user._id });
 
-  // Dùng $addToSet / $pull để tránh đếm sai khi bấm nhanh liên tục
+  // $addToSet / $pull tránh đếm sai khi bấm nhanh liên tục
   const update = already
     ? { $pull: { likes: req.user._id }, $inc: { likeCount: -1 } }
     : { $addToSet: { likes: req.user._id }, $inc: { likeCount: 1 } };
@@ -241,16 +288,12 @@ export const togglePostLike = async (req, res) => {
 
   res.status(200).json({
     status: 'success',
-    data: {
-      liked: !already,
-      likeCount: Math.max(0, updated.likeCount),
-    },
+    data: { liked: !already, likeCount: Math.max(0, updated.likeCount) },
   });
 };
 
 /**
- * DELETE /api/community/posts/:id
- * Xoá mềm — giữ lại để kiểm duyệt truy vết.
+ * DELETE /api/community/posts/:id — xoá mềm, giữ lại để truy vết kiểm duyệt
  */
 export const deletePost = async (req, res) => {
   if (!mongoose.isValidObjectId(req.params.id)) return badId(res);
@@ -301,6 +344,10 @@ export const getComments = async (req, res) => {
     });
   }
 
+  // Không được để lọt: bình luận của bài trường cũng phải chặn như bài
+  const denied = postAccessError(post, req.user);
+  if (denied) return res.status(denied.status).json({ status: 'error', ...denied });
+
   const filter = { post: post._id, parentComment: null };
 
   const [comments, total] = await Promise.all([
@@ -312,7 +359,6 @@ export const getComments = async (req, res) => {
     Comment.countDocuments(filter),
   ]);
 
-  // Chỉ nạp thông tin người viết cho bình luận công khai
   const publicOnes = comments.filter((c) => !c.isAnonymous && c.author);
   if (publicOnes.length) {
     const User = mongoose.model('User');
@@ -375,6 +421,9 @@ export const createComment = async (req, res) => {
     });
   }
 
+  const denied = postAccessError(post, req.user);
+  if (denied) return res.status(denied.status).json({ status: 'error', ...denied });
+
   if (value.parentComment) {
     const parent = await Comment.findOne({
       _id: value.parentComment,
@@ -388,13 +437,12 @@ export const createComment = async (req, res) => {
         message: 'Bình luận gốc không tồn tại',
       });
     }
-    // Chỉ cho lồng một cấp — sâu hơn thì rất khó đọc trên màn hình điện thoại
+    // Chỉ cho lồng một cấp — sâu hơn rất khó đọc trên màn hình điện thoại
     if (parent.parentComment) value.parentComment = String(parent.parentComment);
   }
 
   const isPostAuthor = String(post.author) === String(req.user._id);
 
-  // Cấp số thứ tự ẩn danh ổn định trong phạm vi bài này
   let ordinal = null;
   if (value.isAnonymous && !isPostAuthor) {
     ordinal = await Post.resolveAnonymousOrdinal(post._id, req.user._id);
@@ -421,7 +469,11 @@ export const createComment = async (req, res) => {
 
   const out = comment.toObject();
   if (!value.isAnonymous) {
-    out.author = { _id: req.user._id, nickname: req.user.nickname, profilePhoto: req.user.profilePhoto };
+    out.author = {
+      _id: req.user._id,
+      nickname: req.user.nickname,
+      profilePhoto: req.user.profilePhoto,
+    };
   }
 
   res.status(201).json({
@@ -477,6 +529,12 @@ export const toggleCommentLike = async (req, res) => {
       code: 'COMMENT_NOT_FOUND',
       message: 'Bình luận không tồn tại',
     });
+  }
+
+  const post = await Post.findById(comment.post);
+  if (post) {
+    const denied = postAccessError(post, req.user);
+    if (denied) return res.status(denied.status).json({ status: 'error', ...denied });
   }
 
   const already = await Comment.exists({ _id: comment._id, likes: req.user._id });
