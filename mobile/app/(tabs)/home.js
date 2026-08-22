@@ -2,32 +2,20 @@ import { useCallback, useState } from 'react';
 import { Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useRouter, useFocusEffect } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Button, Rule } from '../src/components/ui';
-import { useAuth } from '../src/store/auth';
-import { fetchToday, meetingLabel, DAYS } from '../src/api/schedule';
-import { colors, radius, spacing, type } from '../src/theme';
+import { Rule } from '../../src/components/ui';
+import { useAuth } from '../../src/store/auth';
+import { fetchToday, meetingLabel, DAYS } from '../../src/api/schedule';
+import { colors, radius, spacing, type } from '../../src/theme';
 
 const STATUS = {
-  guest: {
-    label: 'CHƯA XÁC THỰC',
-    bg: colors.accent,
-    fg: colors.accentInk,
-  },
-  pending: {
-    label: 'ĐANG CHỜ MÃ',
-    bg: colors.warningSoft,
-    fg: colors.warningInk,
-  },
-  verified: {
-    label: 'ĐÃ XÁC THỰC',
-    bg: colors.successSoft,
-    fg: colors.successInk,
-  },
+  guest: { label: 'CHƯA XÁC THỰC', bg: colors.accent, fg: colors.accentInk },
+  pending: { label: 'ĐANG CHỜ MÃ', bg: colors.warningSoft, fg: colors.warningInk },
+  verified: { label: 'ĐÃ XÁC THỰC', bg: colors.successSoft, fg: colors.successInk },
 };
 
 export default function Home() {
   const router = useRouter();
-  const { user, logout } = useAuth();
+  const { user } = useAuth();
   const insets = useSafeAreaInsets();
 
   const [today, setToday] = useState({ classes: [], dayOfWeek: null });
@@ -54,17 +42,12 @@ export default function Home() {
   const uni = user?.university;
   const dayLabel = DAYS.find((d) => d.value === today.dayOfWeek)?.label || 'Hôm nay';
 
-  const signOut = async () => {
-    await logout();
-    router.replace('/login');
-  };
-
   return (
     <ScrollView
       style={{ flex: 1, backgroundColor: colors.bg }}
       contentContainerStyle={[
         s.scroll,
-        { paddingTop: insets.top + spacing.lg, paddingBottom: insets.bottom + spacing.xl },
+        { paddingTop: insets.top + spacing.lg, paddingBottom: spacing.xl },
       ]}
       refreshControl={
         <RefreshControl
@@ -90,7 +73,6 @@ export default function Home() {
       <Text style={s.greeting}>Chào {user?.firstName || 'bạn'}</Text>
       {Boolean(uni?.shortName) && <Text style={s.uni}>{uni.shortName}</Text>}
 
-      {/* ===== LỊCH HỌC HÔM NAY ===== */}
       <View style={s.sectionHead}>
         <Text style={s.sectionTitle}>{dayLabel}</Text>
         <Pressable onPress={() => router.push('/schedule')} hitSlop={8}>
@@ -127,20 +109,16 @@ export default function Home() {
         </Pressable>
       )}
 
-      {/* ===== MỜI XÁC THỰC ===== */}
       {user?.verificationStatus !== 'verified' && (
-        <View style={s.inviteCard}>
+        <Pressable onPress={() => router.push('/verify')} style={s.inviteCard}>
           <Text style={s.inviteTitle}>Cộng đồng trường</Text>
           <Text style={s.inviteLine}>
             Xác thực email trường để đọc và đăng bài trong cộng đồng riêng của trường bạn.
             Chưa có mail trường cũng không sao — quay lại khi trường cấp.
           </Text>
-        </View>
+          <Text style={s.inviteCta}>Xác thực ngay →</Text>
+        </Pressable>
       )}
-
-      <View style={{ marginTop: spacing.xl }}>
-        <Button title="Đăng xuất" onPress={signOut} variant="ghost" />
-      </View>
     </ScrollView>
   );
 }
@@ -203,4 +181,5 @@ const s = StyleSheet.create({
   },
   inviteTitle: { ...type.label, fontSize: 15, color: colors.brandDeep, marginBottom: spacing.xs },
   inviteLine: { ...type.caption, color: colors.brandDeep },
+  inviteCta: { ...type.label, color: colors.brandDeep, marginTop: spacing.sm },
 });

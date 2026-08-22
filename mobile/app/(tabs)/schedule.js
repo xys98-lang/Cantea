@@ -10,9 +10,9 @@ import {
 } from 'react-native';
 import { useRouter, useFocusEffect } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Button, Notice, Rule } from '../src/components/ui';
-import { fetchSchedule, setTimeDisplay, DAYS, toMinutes } from '../src/api/schedule';
-import { colors, radius, spacing, type } from '../src/theme';
+import { Button, Notice, Rule } from '../../src/components/ui';
+import { fetchSchedule, setTimeDisplay, DAYS, toMinutes } from '../../src/api/schedule';
+import { colors, radius, spacing, type } from '../../src/theme';
 
 const ROW_H = 52;
 const COL_W = 78;
@@ -44,7 +44,6 @@ export default function ScheduleScreen() {
     }
   }, []);
 
-  // Tải lại mỗi lần quay về màn hình, để thấy ngay môn vừa thêm
   useFocusEffect(
     useCallback(() => {
       load();
@@ -57,17 +56,15 @@ export default function ScheduleScreen() {
     try {
       await setTimeDisplay(next);
     } catch {
-      // Không quan trọng nếu lưu thất bại — hiển thị vẫn đổi trong phiên này
+      // Hiển thị vẫn đổi trong phiên này dù lưu thất bại
     }
   };
 
-  /** Chỉ hiện Chủ nhật khi thực sự có lịch học */
   const visibleDays = useMemo(() => {
     const hasSunday = courses.some((c) => c.meetings?.some((m) => m.dayOfWeek === 8));
     return hasSunday ? DAYS : DAYS.filter((d) => d.value !== 8);
   }, [courses]);
 
-  /** Thu gọn lưới về khoảng tiết thực sự dùng, thay vì hiện đủ 15 tiết */
   const visiblePeriods = useMemo(() => {
     if (!periods.length) return [];
     if (!courses.length) return periods.slice(0, 10);
@@ -77,11 +74,11 @@ export default function ScheduleScreen() {
 
     courses.forEach((c) =>
       (c.meetings || []).forEach((m) => {
-        const s = toMinutes(m.startTime);
-        const e = toMinutes(m.endTime);
+        const st = toMinutes(m.startTime);
+        const en = toMinutes(m.endTime);
         periods.forEach((p, i) => {
-          if (toMinutes(p.start) <= s && s < toMinutes(p.end)) min = Math.min(min, i);
-          if (toMinutes(p.start) < e && e <= toMinutes(p.end)) max = Math.max(max, i);
+          if (toMinutes(p.start) <= st && st < toMinutes(p.end)) min = Math.min(min, i);
+          if (toMinutes(p.start) < en && en <= toMinutes(p.end)) max = Math.max(max, i);
         });
       })
     );
@@ -90,7 +87,6 @@ export default function ScheduleScreen() {
     return periods.slice(Math.max(0, min - 1), Math.min(periods.length, max + 2));
   }, [periods, courses]);
 
-  /** Đặt từng buổi học vào đúng ô trên lưới */
   const blocks = useMemo(() => {
     const out = [];
     if (!visiblePeriods.length) return out;
@@ -156,7 +152,7 @@ export default function ScheduleScreen() {
       <ScrollView
         contentContainerStyle={[
           s.scroll,
-          { paddingTop: insets.top + spacing.md, paddingBottom: insets.bottom + 96 },
+          { paddingTop: insets.top + spacing.md, paddingBottom: spacing.xxl },
         ]}
         refreshControl={
           <RefreshControl
@@ -251,9 +247,7 @@ export default function ScheduleScreen() {
               </ScrollView>
             </View>
 
-            <Text style={s.hint}>
-              Chạm vào một môn để sửa. Kéo ngang để xem hết các ngày.
-            </Text>
+            <Text style={s.hint}>Chạm vào một môn để sửa. Kéo ngang để xem hết các ngày.</Text>
           </>
         )}
       </ScrollView>
@@ -261,7 +255,7 @@ export default function ScheduleScreen() {
       {courses.length > 0 && (
         <Pressable
           onPress={() => router.push('/course-edit')}
-          style={[s.fab, { bottom: insets.bottom + spacing.lg }]}
+          style={s.fab}
           accessibilityRole="button"
           accessibilityLabel="Thêm môn học"
         >
@@ -342,6 +336,7 @@ const s = StyleSheet.create({
   fab: {
     position: 'absolute',
     right: spacing.lg,
+    bottom: spacing.lg,
     width: 56,
     height: 56,
     borderRadius: 28,
