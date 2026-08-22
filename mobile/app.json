@@ -1,0 +1,32 @@
+{
+  "expo": {
+    "name": "Cantea",
+    "slug": "cantea",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "scheme": "cantea",
+    "userInterfaceStyle": "light",
+    "newArchEnabled": true,
+    "splash": {
+      "resizeMode": "contain",
+      "backgroundColor": "#FBF7F4"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "vn.hyperx.cantea"
+    },
+    "android": {
+      "package": "vn.hyperx.cantea",
+      "adaptiveIcon": {
+        "backgroundColor": "#FBF7F4"
+      }
+    },
+    "web": {
+      "bundler": "metro"
+    },
+    "plugins": [
+      "expo-router",
+      "expo-secure-store"
+    ]
+  }
+}

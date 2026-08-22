@@ -1,190 +1,58 @@
 import mongoose from 'mongoose';
 
+/**
+ * Danh mục môn học do nhà trường quản lý.
+ *
+ * KHÔNG dùng cho thời khoá biểu sinh viên tự nhập — cái đó nằm ở
+ * models/Schedule.js và hoàn toàn độc lập với file này.
+ *
+ * Course dành cho giai đoạn sau, khi Cantea có dữ liệu môn học
+ * chính thức từ trường và sinh viên chọn từ danh mục thay vì gõ tay.
+ */
 const courseSchema = new mongoose.Schema(
   {
-    // Course Information
-    courseCode: {
-      type: String,
-      required: true,
-      trim: true,
-    },
-    courseName: {
-      type: String,
-      required: true,
-      trim: true,
-    },
-    description: {
-      type: String,
-      default: '',
-    },
-    credits: {
-      type: Number,
-      min: 0,
-      default: 3,
-    },
-    
-    // Instructor & Location
+    courseCode: { type: String, required: true, trim: true },
+    courseName: { type: String, required: true, trim: true },
+    description: { type: String, default: '' },
+    credits: { type: Number, min: 0, default: 3 },
+
     instructor: {
-      name: {
-        type: String,
-        default: '',
-      },
-      email: {
-        type: String,
-        default: '',
-      },
+      name: { type: String, default: '' },
+      email: { type: String, default: '' },
     },
     location: {
-      building: {
-        type: String,
-        default: '',
-      },
-      room: {
-        type: String,
-        default: '',
-      },
-      campus: {
-        type: String,
-        default: '',
-      },
+      building: { type: String, default: '' },
+      room: { type: String, default: '' },
+      campus: { type: String, default: '' },
     },
-    
-    // Faculty/Department
-    faculty: {
-      type: String,
-      enum: ['Engineering', 'Business', 'Arts', 'Science', 'Law', 'Medicine', 'Other'],
-      default: 'Other',
-    },
-    
-    // Semester/Term
-    semester: {
-      type: String,
-      enum: ['Fall', 'Spring', 'Summer', 'Year-Round'],
-      required: true,
-    },
-    academicYear: {
-      type: String, // e.g., "2024-2025"
-      required: true,
-    },
-    
-    // University
+
+    faculty: { type: String, trim: true, default: '' },
+
+    // HK3 là học kỳ hè
+    term: { type: String, enum: ['HK1', 'HK2', 'HK3'], required: true },
+    academicYear: { type: String, required: true }, // "2026-2027"
+
     university: {
-      type: String,
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'University',
       required: true,
     },
-    
-    // Owner (usually instructor or admin)
+
+    // Người tạo bản ghi — giảng viên hoặc quản trị viên
     owner: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'User',
-      required: true,
+      default: null,
     },
-    
-    // Status
-    isActive: {
-      type: Boolean,
-      default: true,
-    },
+
+    isActive: { type: Boolean, default: true },
   },
-  {
-    timestamps: true,
-  }
+  { timestamps: true }
 );
 
-const courseSchema_export = courseSchema;
-export default courseSchema_export;
+courseSchema.index({ university: 1, term: 1, academicYear: 1 });
+courseSchema.index({ university: 1, courseCode: 1 });
 
-// Schedule Schema (Student's timetable)
-const scheduleSchema = new mongoose.Schema(
-  {
-    // Student
-    student: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: 'User',
-      required: true,
-    },
-    
-    // Course Reference
-    course: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: 'Course',
-      required: true,
-    },
-    
-    // Schedule Details
-    dayOfWeek: {
-      type: String,
-      enum: ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'],
-      required: true,
-    },
-    startTime: {
-      type: String, // Format: "HH:MM" (24-hour)
-      required: true,
-    },
-    endTime: {
-      type: String,
-      required: true,
-    },
-    
-    // Recurring
-    isRecurring: {
-      type: Boolean,
-      default: true,
-    },
-    recurrenceType: {
-      type: String,
-      enum: ['weekly', 'bi-weekly', 'once'],
-      default: 'weekly',
-    },
-    startDate: {
-      type: Date,
-      required: true,
-    },
-    endDate: {
-      type: Date,
-    },
-    
-    // Location
-    location: {
-      building: String,
-      room: String,
-      campus: String,
-    },
-    
-    // Notes
-    notes: {
-      type: String,
-      default: '',
-    },
-    
-    // Reminders
-    reminderBefore: {
-      type: Number, // Minutes before class
-      enum: [0, 15, 30, 60],
-      default: 15,
-    },
-    reminderEnabled: {
-      type: Boolean,
-      default: true,
-    },
-    
-    // Status
-    isCancelled: {
-      type: Boolean,
-      default: false,
-    },
-  },
-  {
-    timestamps: true,
-  }
-);
-
-// Indexes for faster queries
-scheduleSchema.index({ student: 1, startDate: 1 });
-scheduleSchema.index({ course: 1 });
-scheduleSchema.index({ dayOfWeek: 1 });
-
-const Schedule = mongoose.model('Schedule', scheduleSchema);
 const Course = mongoose.model('Course', courseSchema);
 
-export { Course, Schedule };
+export default Course;

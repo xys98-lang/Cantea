@@ -1,21 +1,35 @@
 import mongoose from 'mongoose';
 import bcrypt from 'bcryptjs';
 
+/** Khung tiết dùng chung cho User (cá nhân) và University (toàn trường) */
+export const periodEntrySchema = new mongoose.Schema(
+  {
+    period: { type: Number, required: true, min: 1, max: 30 },
+    start: { type: String, required: true },
+    end: { type: String, required: true },
+    session: {
+      type: String,
+      enum: ['morning', 'afternoon', 'evening'],
+      default: 'morning',
+    },
+  },
+  { _id: false }
+);
+
 const userSchema = new mongoose.Schema(
   {
     // ===== DANH TÍNH (dùng để đăng nhập) =====
-    // Đây là email cá nhân. KHÔNG phải email trường.
     email: {
       type: String,
       required: true,
-      unique: true, // đã tự tạo index, không khai báo index() lần nữa
+      unique: true,
       lowercase: true,
       trim: true,
       match: [/.+@.+\..+/, 'Email không hợp lệ'],
     },
     password: {
       type: String,
-      select: false, // luôn phải .select('+password') khi cần so sánh
+      select: false,
       minlength: 8,
     },
     googleId: {
@@ -30,7 +44,7 @@ const userSchema = new mongoose.Schema(
       default: 'local',
     },
 
-    // ===== XÁC THỰC TRƯỜNG (tách riêng khỏi danh tính) =====
+    // ===== XÁC THỰC TRƯỜNG =====
     university: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'University',
@@ -42,7 +56,6 @@ const userSchema = new mongoose.Schema(
       trim: true,
       unique: true,
       sparse: true,
-      // KHÔNG đặt default: null — xem ghi chú ở googleId
     },
     verificationStatus: {
       type: String,
@@ -51,7 +64,6 @@ const userSchema = new mongoose.Schema(
     },
     verifiedAt: { type: Date, default: null },
 
-    // Trạng thái mã xác thực đang chờ. select: false để không lộ ra API.
     verification: {
       codeHash: { type: String, select: false, default: null },
       pendingEmail: { type: String, default: null },
@@ -65,13 +77,25 @@ const userSchema = new mongoose.Schema(
     // ===== HỒ SƠ =====
     firstName: { type: String, required: true, trim: true, maxlength: 50 },
     lastName: { type: String, required: true, trim: true, maxlength: 50 },
-    // Tên hiển thị trong cộng đồng. Mặc định lấy firstName.
     nickname: { type: String, trim: true, maxlength: 30 },
     profilePhoto: { type: String, default: null },
     bio: { type: String, maxlength: 500, default: '' },
     major: { type: String, default: '' },
     year: { type: Number, min: 1, max: 6 },
     studentId: { type: String, unique: true, sparse: true },
+
+    // ===== THỜI KHOÁ BIỂU =====
+    /**
+     * Khung tiết riêng của người dùng. Trống thì dùng khung của trường,
+     * trường cũng trống thì dùng khung mặc định trong utils/periods.js.
+     * Đổi khung KHÔNG ảnh hưởng môn đã nhập, vì database lưu giờ chứ không lưu tiết.
+     */
+    periodSchedule: { type: [periodEntrySchema], default: [] },
+
+    preferences: {
+      // 'period' = hiện "Tiết 1–3", 'clock' = hiện "07:00–09:30"
+      timeDisplay: { type: String, enum: ['period', 'clock'], default: 'period' },
+    },
 
     // ===== QUYỀN RIÊNG TƯ =====
     privacy: {
@@ -118,13 +142,10 @@ const userSchema = new mongoose.Schema(
   }
 );
 
-// ===== INDEXES =====
-// email / universityEmail / googleId / studentId đã có index nhờ unique:true.
-// Chỉ khai báo thêm những index chưa có, tránh cảnh báo "Duplicate schema index".
+// email / universityEmail / googleId / studentId đã có index nhờ unique:true
 userSchema.index({ university: 1, verificationStatus: 1 });
 userSchema.index({ createdAt: -1 });
 
-// ===== HOOKS =====
 userSchema.pre('save', async function (next) {
   if (!this.isModified('password') || !this.password) return next();
   try {
@@ -136,15 +157,12 @@ userSchema.pre('save', async function (next) {
   }
 });
 
-// Nếu không nhập nickname, lấy firstName làm mặc định
 userSchema.pre('save', function (next) {
   if (!this.nickname) this.nickname = this.firstName;
   next();
 });
 
-// ===== METHODS =====
 userSchema.methods.comparePassword = async function (enteredPassword) {
-  // this.password chỉ tồn tại khi query có .select('+password')
   if (!this.password) return false;
   return bcrypt.compare(enteredPassword, this.password);
 };
@@ -153,10 +171,6 @@ userSchema.methods.isVerified = function () {
   return this.verificationStatus === 'verified';
 };
 
-/**
- * Dữ liệu an toàn để trả về client.
- * Loại bỏ mọi thứ nhạy cảm, kể cả email trường.
- */
 userSchema.methods.getPublicProfile = function () {
   const p = this.toObject();
   delete p.password;

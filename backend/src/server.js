@@ -11,7 +11,7 @@ dotenv.config();
 
 // Import routes
 import authRoutes from './routes/authRoutes.js';
-//import scheduleRoutes from './routes/scheduleRoutes.js';
+import scheduleRoutes from './routes/scheduleRoutes.js';
 //import gradeRoutes from './routes/gradeRoutes.js';
 import communityRoutes from './routes/communityRoutes.js';
 //import marketplaceRoutes from './routes/marketplaceRoutes.js';
@@ -50,7 +50,7 @@ app.use((req, res, next) => {
 
 // ===== ROUTES =====
 app.use('/api/auth', authRoutes);
-//app.use('/api/schedule', scheduleRoutes);
+app.use('/api/schedule', scheduleRoutes);
 //app.use('/api/grades', gradeRoutes);
 app.use('/api/community', communityRoutes);
 //app.use('/api/marketplace', marketplaceRoutes);
