@@ -1,33 +1,27 @@
-import { ScrollView, StyleSheet, Text, View } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useCallback, useState } from 'react';
+import { Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { useRouter, useFocusEffect } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Button, Rule } from '../src/components/ui';
 import { useAuth } from '../src/store/auth';
-import { API_BASE_URL } from '../src/api/client';
+import { fetchToday, meetingLabel, DAYS } from '../src/api/schedule';
 import { colors, radius, spacing, type } from '../src/theme';
 
-/**
- * Butter yellow cho trạng thái chưa xác thực: đây là lời mời, không phải lỗi.
- * Màu vàng bơ nói "còn việc hay đang chờ bạn", khác hẳn màu đỏ cảnh báo.
- */
 const STATUS = {
   guest: {
     label: 'CHƯA XÁC THỰC',
     bg: colors.accent,
     fg: colors.accentInk,
-    line: 'Xác thực email trường để vào cộng đồng riêng của trường bạn.',
   },
   pending: {
     label: 'ĐANG CHỜ MÃ',
     bg: colors.warningSoft,
     fg: colors.warningInk,
-    line: 'Nhập mã 6 số đã gửi tới email trường của bạn.',
   },
   verified: {
     label: 'ĐÃ XÁC THỰC',
     bg: colors.successSoft,
     fg: colors.successInk,
-    line: 'Bạn đã vào được cộng đồng riêng của trường.',
   },
 };
 
@@ -36,8 +30,29 @@ export default function Home() {
   const { user, logout } = useAuth();
   const insets = useSafeAreaInsets();
 
+  const [today, setToday] = useState({ classes: [], dayOfWeek: null });
+  const [refreshing, setRefreshing] = useState(false);
+
+  const load = useCallback(async () => {
+    try {
+      const data = await fetchToday();
+      setToday(data);
+    } catch {
+      // Không chặn màn hình chính vì lỗi thời khoá biểu
+    } finally {
+      setRefreshing(false);
+    }
+  }, []);
+
+  useFocusEffect(
+    useCallback(() => {
+      load();
+    }, [load])
+  );
+
   const status = STATUS[user?.verificationStatus] || STATUS.guest;
   const uni = user?.university;
+  const dayLabel = DAYS.find((d) => d.value === today.dayOfWeek)?.label || 'Hôm nay';
 
   const signOut = async () => {
     await logout();
@@ -51,34 +66,79 @@ export default function Home() {
         s.scroll,
         { paddingTop: insets.top + spacing.lg, paddingBottom: insets.bottom + spacing.xl },
       ]}
+      refreshControl={
+        <RefreshControl
+          refreshing={refreshing}
+          onRefresh={() => {
+            setRefreshing(true);
+            load();
+          }}
+          tintColor={colors.brand}
+        />
+      }
     >
-      <Text style={s.wordmark}>cantea</Text>
-      <Rule style={{ marginBottom: spacing.xl }} />
+      <View style={s.head}>
+        <View style={{ flex: 1 }}>
+          <Text style={s.wordmark}>cantea</Text>
+          <Rule style={{ marginBottom: 0 }} />
+        </View>
+        <View style={[s.badge, { backgroundColor: status.bg }]}>
+          <Text style={[s.badgeLabel, { color: status.fg }]}>{status.label}</Text>
+        </View>
+      </View>
 
       <Text style={s.greeting}>Chào {user?.firstName || 'bạn'}</Text>
-      <Text style={s.email}>{user?.email}</Text>
+      {Boolean(uni?.shortName) && <Text style={s.uni}>{uni.shortName}</Text>}
 
-      <View style={[s.badge, { backgroundColor: status.bg }]}>
-        <Text style={[s.badgeLabel, { color: status.fg }]}>{status.label}</Text>
+      {/* ===== LỊCH HỌC HÔM NAY ===== */}
+      <View style={s.sectionHead}>
+        <Text style={s.sectionTitle}>{dayLabel}</Text>
+        <Pressable onPress={() => router.push('/schedule')} hitSlop={8}>
+          <Text style={s.link}>Cả tuần →</Text>
+        </Pressable>
       </View>
 
-      <Text style={s.statusLine}>{status.line}</Text>
+      {today.classes?.length ? (
+        today.classes.map((c, i) => (
+          <Pressable
+            key={`${c.courseId}-${i}`}
+            onPress={() => router.push(`/course-edit?id=${c.courseId}`)}
+            style={s.classRow}
+          >
+            <View style={[s.stripe, { backgroundColor: c.color || colors.brand }]} />
+            <View style={{ flex: 1 }}>
+              <Text style={s.className} numberOfLines={1}>
+                {c.courseName}
+              </Text>
+              <Text style={s.classMeta}>
+                {meetingLabel(c, 'period')}
+                {c.room ? ` · ${c.room}` : ''}
+              </Text>
+            </View>
+            <Text style={s.classTime}>{c.startTime}</Text>
+          </Pressable>
+        ))
+      ) : (
+        <Pressable onPress={() => router.push('/schedule')} style={s.emptyCard}>
+          <Text style={s.emptyTitle}>Hôm nay không có lịch học</Text>
+          <Text style={s.emptyLine}>
+            Chưa thêm môn nào? Nhập thời khoá biểu để xem lịch cả tuần trong một màn hình.
+          </Text>
+        </Pressable>
+      )}
 
-      {uni ? (
-        <View style={s.card}>
-          <Text style={s.cardLabel}>TRƯỜNG CỦA BẠN</Text>
-          <Text style={s.cardValue}>{uni.name || uni.shortName}</Text>
-          {Boolean(uni.shortName) && <Text style={s.cardSub}>{uni.shortName}</Text>}
+      {/* ===== MỜI XÁC THỰC ===== */}
+      {user?.verificationStatus !== 'verified' && (
+        <View style={s.inviteCard}>
+          <Text style={s.inviteTitle}>Cộng đồng trường</Text>
+          <Text style={s.inviteLine}>
+            Xác thực email trường để đọc và đăng bài trong cộng đồng riêng của trường bạn.
+            Chưa có mail trường cũng không sao — quay lại khi trường cấp.
+          </Text>
         </View>
-      ) : null}
+      )}
 
-      {/* Khối chẩn đoán — tiện khi phát triển, gỡ trước khi phát hành */}
-      <View style={s.debug}>
-        <Text style={s.debugLabel}>MÁY CHỦ</Text>
-        <Text style={s.debugValue}>{API_BASE_URL}</Text>
-      </View>
-
-      <View style={{ marginTop: spacing.lg }}>
+      <View style={{ marginTop: spacing.xl }}>
         <Button title="Đăng xuất" onPress={signOut} variant="ghost" />
       </View>
     </ScrollView>
@@ -86,72 +146,61 @@ export default function Home() {
 }
 
 const s = StyleSheet.create({
-  scroll: {
-    paddingHorizontal: spacing.lg,
-  },
-  wordmark: {
-    ...type.wordmark,
-    color: colors.brandDeep,
-  },
-  greeting: {
-    ...type.title,
-    color: colors.ink,
-  },
-  email: {
-    ...type.caption,
-    color: colors.inkMuted,
-    marginTop: spacing.xs,
-  },
+  scroll: { paddingHorizontal: spacing.lg },
+  head: { flexDirection: 'row', alignItems: 'flex-start', marginBottom: spacing.lg },
+  wordmark: { ...type.wordmark, color: colors.brandDeep },
   badge: {
-    alignSelf: 'flex-start',
     borderRadius: radius.pill,
     paddingHorizontal: spacing.md,
     paddingVertical: 6,
-    marginTop: spacing.lg,
+    marginTop: spacing.sm,
   },
-  badgeLabel: {
-    ...type.micro,
+  badgeLabel: { ...type.micro },
+
+  greeting: { ...type.title, color: colors.ink },
+  uni: { ...type.caption, color: colors.inkMuted, marginTop: 2 },
+
+  sectionHead: {
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    justifyContent: 'space-between',
+    marginTop: spacing.xl,
+    marginBottom: spacing.md,
   },
-  statusLine: {
-    ...type.body,
-    color: colors.inkMuted,
-    marginTop: spacing.md,
-  },
-  card: {
-    backgroundColor: colors.brandSoft,
+  sectionTitle: { ...type.heading, color: colors.ink },
+  link: { ...type.label, color: colors.brandDeep },
+
+  classRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: colors.surface,
     borderWidth: 1,
-    borderColor: colors.brandSoft,
+    borderColor: colors.border,
+    borderRadius: radius.md,
+    padding: spacing.md,
+    marginBottom: spacing.sm,
+  },
+  stripe: { width: 4, height: 36, borderRadius: 2, marginRight: spacing.md },
+  className: { ...type.label, fontSize: 15, color: colors.ink },
+  classMeta: { ...type.caption, color: colors.inkMuted, marginTop: 2 },
+  classTime: { ...type.label, color: colors.brandDeep, marginLeft: spacing.sm },
+
+  emptyCard: {
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radius.lg,
+    padding: spacing.md,
+  },
+  emptyTitle: { ...type.label, fontSize: 15, color: colors.ink, marginBottom: spacing.xs },
+  emptyLine: { ...type.caption, color: colors.inkMuted },
+
+  inviteCard: {
+    backgroundColor: colors.brandSoft,
     borderRadius: radius.lg,
     padding: spacing.md,
     marginTop: spacing.lg,
   },
-  cardLabel: {
-    ...type.micro,
-    color: colors.brand,
-    marginBottom: spacing.sm,
-  },
-  cardValue: {
-    ...type.heading,
-    color: colors.brandDeep,
-  },
-  cardSub: {
-    ...type.caption,
-    color: colors.inkMuted,
-    marginTop: 2,
-  },
-  debug: {
-    marginTop: spacing.xl,
-    paddingTop: spacing.md,
-    borderTopWidth: 1,
-    borderTopColor: colors.border,
-  },
-  debugLabel: {
-    ...type.micro,
-    color: colors.inkFaint,
-  },
-  debugValue: {
-    ...type.caption,
-    color: colors.inkMuted,
-    marginTop: spacing.xs,
-  },
+  inviteTitle: { ...type.label, fontSize: 15, color: colors.brandDeep, marginBottom: spacing.xs },
+  inviteLine: { ...type.caption, color: colors.brandDeep },
 });
