@@ -13,7 +13,7 @@ dotenv.config();
 import authRoutes from './routes/authRoutes.js';
 //import scheduleRoutes from './routes/scheduleRoutes.js';
 //import gradeRoutes from './routes/gradeRoutes.js';
-//import communityRoutes from './routes/communityRoutes.js';
+import communityRoutes from './routes/communityRoutes.js';
 //import marketplaceRoutes from './routes/marketplaceRoutes.js';
 //import userRoutes from './routes/userRoutes.js';
 
@@ -33,7 +33,7 @@ app.use(cors({
 // Rate limiting
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 100, // limit each IP to 100 requests per windowMs
+  max: 300, // limit each IP to 100 requests per windowMs
   message: 'Too many requests from this IP, please try again later.',
 });
 app.use('/api/', limiter);
@@ -52,7 +52,7 @@ app.use((req, res, next) => {
 app.use('/api/auth', authRoutes);
 //app.use('/api/schedule', scheduleRoutes);
 //app.use('/api/grades', gradeRoutes);
-//app.use('/api/community', communityRoutes);
+app.use('/api/community', communityRoutes);
 //app.use('/api/marketplace', marketplaceRoutes);
 //app.use('/api/users', userRoutes);
 
@@ -72,10 +72,7 @@ app.use(errorHandler);
 // ===== DATABASE CONNECTION =====
 const connectDB = async () => {
   try {
-    await mongoose.connect(process.env.MONGODB_URI, {
-      useNewUrlParser: true,
-      useUnifiedTopology: true,
-    });
+    await mongoose.connect(process.env.MONGODB_URI);
     logger.info('✅ MongoDB connected successfully');
   } catch (error) {
     logger.error(`❌ MongoDB connection error: ${error.message}`);
@@ -100,12 +97,11 @@ const startServer = async () => {
 };
 
 // Handle graceful shutdown
-process.on('SIGTERM', () => {
+process.on('SIGTERM', async () => {
   logger.info('SIGTERM received. Shutting down gracefully...');
-  mongoose.connection.close(() => {
-    logger.info('MongoDB connection closed');
-    process.exit(0);
-  });
+  await mongoose.connection.close();
+  logger.info('MongoDB connection closed');
+  process.exit(0);
 });
 
 startServer();

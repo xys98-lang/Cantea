@@ -1,20 +1,42 @@
 import express from 'express';
+import rateLimit from 'express-rate-limit';
+import { register, login, getMe, logout } from '../controllers/authController.js';
+import {
+  requestVerification,
+  confirmVerification,
+  getVerificationStatus,
+} from '../controllers/verificationController.js';
+import { protect } from '../middleware/authMiddleware.js';
 
 const router = express.Router();
 
-// Register route
-router.post('/register', (req, res) => {
-  res.json({ message: 'Register endpoint', status: 'ok' });
+/**
+ * Giới hạn riêng cho nhóm auth, chặt hơn nhiều so với mức chung.
+ * Chống dò mật khẩu bằng vét cạn.
+ */
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 10,
+  message: {
+    status: 'error',
+    code: 'TOO_MANY_REQUESTS',
+    message: 'Bạn đã thử quá nhiều lần. Vui lòng đợi 15 phút.',
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
 });
 
-// Login route
-router.post('/login', (req, res) => {
-  res.json({ message: 'Login endpoint', status: 'ok' });
-});
+// ===== CÔNG KHAI =====
+router.post('/register', authLimiter, register);
+router.post('/login', authLimiter, login);
 
-// Get user route
-router.get('/me', (req, res) => {
-  res.json({ message: 'Get user endpoint', status: 'ok' });
-});
+// ===== CẦN ĐĂNG NHẬP =====
+router.get('/me', protect, getMe);
+router.post('/logout', protect, logout);
+
+// ===== XÁC THỰC TRƯỜNG =====
+router.post('/university/request', protect, authLimiter, requestVerification);
+router.post('/university/confirm', protect, authLimiter, confirmVerification);
+router.get('/university/status', protect, getVerificationStatus);
 
 export default router;

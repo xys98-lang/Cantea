@@ -3,157 +3,130 @@ import bcrypt from 'bcryptjs';
 
 const userSchema = new mongoose.Schema(
   {
-    // Authentication
+    // ===== DANH TÍNH (dùng để đăng nhập) =====
+    // Đây là email cá nhân. KHÔNG phải email trường.
     email: {
       type: String,
       required: true,
-      unique: true,
+      unique: true, // đã tự tạo index, không khai báo index() lần nữa
       lowercase: true,
       trim: true,
-      match: /.+\@.+\..+/,
+      match: [/.+@.+\..+/, 'Email không hợp lệ'],
+    },
+    password: {
+      type: String,
+      select: false, // luôn phải .select('+password') khi cần so sánh
+      minlength: 8,
     },
     googleId: {
       type: String,
       unique: true,
       sparse: true,
+      // KHÔNG đặt default: null — sparse index sẽ mất tác dụng
     },
-    password: {
+    authProvider: {
       type: String,
-      select: false, // Don't return password by default
+      enum: ['local', 'google'],
+      default: 'local',
     },
-    
-    // Profile Information
-    firstName: {
-      type: String,
-      required: true,
-      trim: true,
-    },
-    lastName: {
-      type: String,
-      required: true,
-      trim: true,
-    },
-    profilePhoto: {
-      type: String, // URL to photo
-      default: null,
-    },
-    bio: {
-      type: String,
-      maxlength: 500,
-      default: '',
-    },
-    
-    // University Information
+
+    // ===== XÁC THỰC TRƯỜNG (tách riêng khỏi danh tính) =====
     university: {
-      type: String,
-      required: true, // Auto-detected from email domain
-      enum: ['RMIT Vietnam', 'Saigon University', 'UEH', 'Ton Duc Thang University', 'HCMUNRE', 'Other'],
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'University',
+      default: null,
     },
     universityEmail: {
       type: String,
-      required: true,
-      unique: true,
-    },
-    major: {
-      type: String,
-      default: '',
-    },
-    year: {
-      type: Number, // 1, 2, 3, 4
-      min: 1,
-      max: 6,
-    },
-    studentId: {
-      type: String,
+      lowercase: true,
+      trim: true,
       unique: true,
       sparse: true,
+      // KHÔNG đặt default: null — xem ghi chú ở googleId
     },
-    
-    // Privacy Settings
+    verificationStatus: {
+      type: String,
+      enum: ['guest', 'pending', 'verified'],
+      default: 'guest',
+    },
+    verifiedAt: { type: Date, default: null },
+
+    // Trạng thái mã xác thực đang chờ. select: false để không lộ ra API.
+    verification: {
+      codeHash: { type: String, select: false, default: null },
+      pendingEmail: { type: String, default: null },
+      expiresAt: { type: Date, default: null },
+      attempts: { type: Number, default: 0 },
+      lastSentAt: { type: Date, default: null },
+      sendCount: { type: Number, default: 0 },
+      windowStartedAt: { type: Date, default: null },
+    },
+
+    // ===== HỒ SƠ =====
+    firstName: { type: String, required: true, trim: true, maxlength: 50 },
+    lastName: { type: String, required: true, trim: true, maxlength: 50 },
+    // Tên hiển thị trong cộng đồng. Mặc định lấy firstName.
+    nickname: { type: String, trim: true, maxlength: 30 },
+    profilePhoto: { type: String, default: null },
+    bio: { type: String, maxlength: 500, default: '' },
+    major: { type: String, default: '' },
+    year: { type: Number, min: 1, max: 6 },
+    studentId: { type: String, unique: true, sparse: true },
+
+    // ===== QUYỀN RIÊNG TƯ =====
     privacy: {
       profileVisibility: {
         type: String,
         enum: ['public', 'university-only', 'friends-only', 'private'],
         default: 'university-only',
       },
-      showGrades: {
-        type: Boolean,
-        default: false, // Don't show grades publicly by default
-      },
-      showSchedule: {
-        type: Boolean,
-        default: false,
-      },
-      allowMessages: {
-        type: Boolean,
-        default: true,
-      },
+      showGrades: { type: Boolean, default: false },
+      showSchedule: { type: Boolean, default: false },
+      allowMessages: { type: Boolean, default: true },
     },
-    
-    // Social
-    friends: [{
-      type: mongoose.Schema.Types.ObjectId,
-      ref: 'User',
-    }],
-    blockedUsers: [{
-      type: mongoose.Schema.Types.ObjectId,
-      ref: 'User',
-    }],
-    
-    // Account Status
-    isVerified: {
-      type: Boolean,
-      default: false,
-    },
-    isActive: {
-      type: Boolean,
-      default: true,
-    },
-    
-    // Roles
+
+    // ===== XÃ HỘI =====
+    friends: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
+    blockedUsers: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
+
+    // ===== TRẠNG THÁI TÀI KHOẢN =====
+    isActive: { type: Boolean, default: true },
     roles: {
       type: [String],
       enum: ['student', 'moderator', 'admin'],
       default: ['student'],
     },
-    
-    // Reputation
-    trustScore: {
-      type: Number,
-      default: 0,
-      min: 0,
-      max: 100,
-    },
-    exchangesCompleted: {
-      type: Number,
-      default: 0,
-    },
-    averageRating: {
-      type: Number,
-      default: 0,
-      min: 0,
-      max: 5,
-    },
-    
-    // Settings
+
+    // ===== UY TÍN =====
+    trustScore: { type: Number, default: 0, min: 0, max: 100 },
+    exchangesCompleted: { type: Number, default: 0 },
+    averageRating: { type: Number, default: 0, min: 0, max: 5 },
+
     notifications: {
       email: { type: Boolean, default: true },
       push: { type: Boolean, default: true },
       classReminders: { type: Boolean, default: true },
     },
-    
+
     lastLogin: Date,
     lastActive: Date,
   },
   {
     timestamps: true,
+    toObject: { virtuals: true },
+    toJSON: { virtuals: true },
   }
 );
 
-// Hash password before saving
+// ===== INDEXES =====
+// email / universityEmail / googleId / studentId đã có index nhờ unique:true.
+// Chỉ khai báo thêm những index chưa có, tránh cảnh báo "Duplicate schema index".
+userSchema.index({ university: 1, verificationStatus: 1 });
+userSchema.index({ createdAt: -1 });
+
+// ===== HOOKS =====
 userSchema.pre('save', async function (next) {
-  if (!this.isModified('password')) return next();
-  
+  if (!this.isModified('password') || !this.password) return next();
   try {
     const salt = await bcrypt.genSalt(10);
     this.password = await bcrypt.hash(this.password, salt);
@@ -163,31 +136,41 @@ userSchema.pre('save', async function (next) {
   }
 });
 
-// Method to compare passwords
+// Nếu không nhập nickname, lấy firstName làm mặc định
+userSchema.pre('save', function (next) {
+  if (!this.nickname) this.nickname = this.firstName;
+  next();
+});
+
+// ===== METHODS =====
 userSchema.methods.comparePassword = async function (enteredPassword) {
-  return await bcrypt.compare(enteredPassword, this.password);
+  // this.password chỉ tồn tại khi query có .select('+password')
+  if (!this.password) return false;
+  return bcrypt.compare(enteredPassword, this.password);
 };
 
-// Method to get public profile (exclude sensitive data)
+userSchema.methods.isVerified = function () {
+  return this.verificationStatus === 'verified';
+};
+
+/**
+ * Dữ liệu an toàn để trả về client.
+ * Loại bỏ mọi thứ nhạy cảm, kể cả email trường.
+ */
 userSchema.methods.getPublicProfile = function () {
-  const profile = this.toObject();
-  delete profile.password;
-  delete profile.googleId;
-  delete profile.universityEmail;
-  delete profile.blockedUsers;
-  return profile;
+  const p = this.toObject();
+  delete p.password;
+  delete p.googleId;
+  delete p.universityEmail;
+  delete p.verification;
+  delete p.blockedUsers;
+  delete p.__v;
+  return p;
 };
 
-// Virtual for full name
 userSchema.virtual('fullName').get(function () {
   return `${this.firstName} ${this.lastName}`;
 });
-
-// Index for faster queries
-userSchema.index({ email: 1 });
-userSchema.index({ universityEmail: 1 });
-userSchema.index({ university: 1 });
-userSchema.index({ createdAt: -1 });
 
 const User = mongoose.model('User', userSchema);
 

@@ -1,102 +1,151 @@
 import jwt from 'jsonwebtoken';
 import User from '../models/User.js';
-import { AppError } from './errorHandler.js';
 import { logger } from '../utils/logger.js';
 
-// Middleware to verify JWT token
+/**
+ * Bắt buộc đăng nhập. Gắn req.user và req.userId.
+ */
 export const protect = async (req, res, next) => {
   try {
     let token;
+    const authHeader = req.headers.authorization;
 
-    // Check for token in Authorization header
-    if (req.headers.authorization && req.headers.authorization.startsWith('Bearer')) {
-      token = req.headers.authorization.split(' ')[1];
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      token = authHeader.split(' ')[1];
     }
 
     if (!token) {
       return res.status(401).json({
         status: 'error',
-        message: 'Not authorized to access this route',
+        code: 'NO_TOKEN',
+        message: 'Bạn cần đăng nhập để tiếp tục',
       });
     }
 
+    let decoded;
     try {
-      // Verify token
-      const decoded = jwt.verify(token, process.env.JWT_SECRET);
-      req.userId = decoded.id;
-      req.user = await User.findById(decoded.id);
-
-      if (!req.user) {
-        return res.status(404).json({
-          status: 'error',
-          message: 'User not found',
-        });
-      }
-
-      next();
+      decoded = jwt.verify(token, process.env.JWT_SECRET);
     } catch (error) {
       if (error.name === 'TokenExpiredError') {
         return res.status(401).json({
           status: 'error',
-          message: 'Token expired',
+          code: 'TOKEN_EXPIRED',
+          message: 'Phiên đăng nhập đã hết hạn',
         });
       }
       return res.status(401).json({
         status: 'error',
-        message: 'Invalid token',
+        code: 'INVALID_TOKEN',
+        message: 'Token không hợp lệ',
       });
     }
+
+    // Bỏ bớt các mảng nặng, không cần cho mỗi request
+    const user = await User.findById(decoded.id)
+      .select('-friends -blockedUsers')
+      .populate('university', 'name shortName slug city');
+
+    if (!user) {
+      return res.status(401).json({
+        status: 'error',
+        code: 'USER_NOT_FOUND',
+        message: 'Tài khoản không tồn tại',
+      });
+    }
+
+    // Tài khoản bị khoá thì chặn ngay, dù token còn hạn
+    if (!user.isActive) {
+      return res.status(403).json({
+        status: 'error',
+        code: 'ACCOUNT_DISABLED',
+        message: 'Tài khoản đã bị vô hiệu hoá',
+      });
+    }
+
+    req.user = user;
+    req.userId = user._id;
+    next();
   } catch (error) {
     logger.error(`Auth middleware error: ${error.message}`);
     res.status(500).json({
       status: 'error',
-      message: 'Server error during authentication',
+      code: 'AUTH_ERROR',
+      message: 'Lỗi hệ thống khi xác thực',
     });
   }
 };
 
-// Middleware to check user role
+/**
+ * Bắt buộc đã xác thực email trường.
+ * Dùng cho bảng tin riêng của trường, đăng bài, bình luận.
+ * Frontend bắt mã UNIVERSITY_VERIFICATION_REQUIRED để hiện màn hình mời xác thực.
+ */
+export const requireVerified = (req, res, next) => {
+  if (!req.user) {
+    return res.status(401).json({
+      status: 'error',
+      code: 'NO_TOKEN',
+      message: 'Bạn cần đăng nhập để tiếp tục',
+    });
+  }
+
+  if (req.user.verificationStatus !== 'verified') {
+    return res.status(403).json({
+      status: 'error',
+      code: 'UNIVERSITY_VERIFICATION_REQUIRED',
+      message: 'Bạn cần xác thực email trường để tham gia cộng đồng này',
+      currentStatus: req.user.verificationStatus,
+    });
+  }
+
+  next();
+};
+
+/**
+ * Phân quyền theo vai trò: authorize('admin', 'moderator')
+ */
 export const authorize = (...allowedRoles) => {
   return (req, res, next) => {
     if (!req.user) {
       return res.status(401).json({
         status: 'error',
-        message: 'Not authenticated',
+        code: 'NO_TOKEN',
+        message: 'Bạn cần đăng nhập để tiếp tục',
       });
     }
 
-    const hasRole = req.user.roles.some((role) => allowedRoles.includes(role));
-
+    const hasRole = (req.user.roles || []).some((r) => allowedRoles.includes(r));
     if (!hasRole) {
       return res.status(403).json({
         status: 'error',
-        message: 'Not authorized to access this resource',
+        code: 'FORBIDDEN',
+        message: 'Bạn không có quyền truy cập',
       });
     }
-
     next();
   };
 };
 
-// Generate JWT token
-export const generateToken = (userId, expiresIn = process.env.JWT_EXPIRE || '7d') => {
+// ===== TOKEN =====
+
+export const generateToken = (userId) => {
   return jwt.sign({ id: userId }, process.env.JWT_SECRET, {
-    expiresIn,
+    expiresIn: process.env.JWT_EXPIRES_IN || '7d',
   });
 };
 
-// Generate refresh token
 export const generateRefreshToken = (userId) => {
-  return jwt.sign({ id: userId }, process.env.JWT_REFRESH_SECRET, {
-    expiresIn: process.env.JWT_REFRESH_EXPIRE || '30d',
+  const secret = process.env.JWT_REFRESH_SECRET || process.env.JWT_SECRET;
+  return jwt.sign({ id: userId, type: 'refresh' }, secret, {
+    expiresIn: process.env.JWT_REFRESH_EXPIRES_IN || '30d',
   });
 };
 
-// Verify refresh token
 export const verifyRefreshToken = (token) => {
   try {
-    return jwt.verify(token, process.env.JWT_REFRESH_SECRET);
-  } catch (error) {
+    const secret = process.env.JWT_REFRESH_SECRET || process.env.JWT_SECRET;
+    return jwt.verify(token, secret);
+  } catch {
     return null;
   }
 };
