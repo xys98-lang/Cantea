@@ -12,9 +12,11 @@ import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Button, Field, Notice, Rule } from '../src/components/ui';
 import { useAuth } from '../src/store/auth';
-import { colors, radius, spacing, type } from '../src/theme';
+import { useTheme, useThemedStyles } from '../src/store/theme';
 
 export default function Register() {
+  const t = useTheme();
+  const s = useThemedStyles(styles);
   const router = useRouter();
   const { register } = useAuth();
   const insets = useSafeAreaInsets();
@@ -64,18 +66,18 @@ export default function Register() {
 
   return (
     <KeyboardAvoidingView
-      style={{ flex: 1, backgroundColor: colors.bg }}
+      style={{ flex: 1, backgroundColor: t.colors.bg }}
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
     >
       <ScrollView
         contentContainerStyle={[
           s.scroll,
-          { paddingTop: insets.top + spacing.xl, paddingBottom: insets.bottom + spacing.xl },
+          { paddingTop: insets.top + t.spacing.xl, paddingBottom: insets.bottom + t.spacing.xl },
         ]}
         keyboardShouldPersistTaps="handled"
       >
         <Text style={s.title}>Tạo tài khoản</Text>
-        <Rule style={{ marginBottom: spacing.lg }} />
+        <Rule style={{ marginBottom: t.spacing.lg }} />
 
         <View style={s.explainer}>
           <Text style={s.explainerText}>
@@ -92,7 +94,7 @@ export default function Register() {
             value={form.lastName}
             onChangeText={set('lastName')}
             placeholder="Nguyễn"
-            style={{ flex: 1, marginRight: spacing.sm }}
+            style={{ flex: 1, marginRight: t.spacing.sm }}
           />
           <Field
             label="TÊN"
@@ -127,7 +129,7 @@ export default function Register() {
           returnKeyType="go"
         />
 
-        <View style={{ marginTop: spacing.sm }}>
+        <View style={{ marginTop: t.spacing.sm }}>
           <Button title="Tạo tài khoản" onPress={submit} loading={loading} />
         </View>
 
@@ -141,39 +143,40 @@ export default function Register() {
   );
 }
 
-const s = StyleSheet.create({
+const styles = (t) =>
+  StyleSheet.create({
   scroll: {
-    paddingHorizontal: spacing.lg,
+    paddingHorizontal: t.spacing.lg,
     flexGrow: 1,
   },
   title: {
-    ...type.title,
-    color: colors.ink,
+    ...t.type.title,
+    color: t.colors.ink,
   },
   explainer: {
-    backgroundColor: colors.brandSoft,
-    borderRadius: radius.md,
-    padding: spacing.md,
-    marginBottom: spacing.lg,
+    backgroundColor: t.colors.fill,
+    borderRadius: t.radius.md,
+    padding: t.spacing.md,
+    marginBottom: t.spacing.lg,
   },
   explainerText: {
-    ...type.caption,
-    color: colors.brandDeep,
+    ...t.type.caption,
+    color: t.colors.accentPressed,
   },
   row: {
     flexDirection: 'row',
   },
   switch: {
-    marginTop: spacing.lg,
+    marginTop: t.spacing.lg,
     alignItems: 'center',
-    paddingVertical: spacing.sm,
+    paddingVertical: t.spacing.sm,
   },
   switchText: {
-    ...type.caption,
-    color: colors.inkMuted,
+    ...t.type.caption,
+    color: t.colors.inkMuted,
   },
   switchLink: {
-    color: colors.brandDeep,
+    color: t.colors.accentPressed,
     fontWeight: '600',
   },
 });

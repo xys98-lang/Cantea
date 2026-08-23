@@ -1,16 +1,18 @@
 import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
 import { Redirect } from 'expo-router';
 import { useAuth } from '../src/store/auth';
-import { colors, spacing, type } from '../src/theme';
+import { useTheme, useThemedStyles } from '../src/store/theme';
 
 export default function Index() {
+  const t = useTheme();
+  const s = useThemedStyles(styles);
   const { booting, isSignedIn } = useAuth();
 
   if (booting) {
     return (
       <View style={s.wrap}>
         <Text style={s.wordmark}>cantea</Text>
-        <ActivityIndicator color={colors.brand} style={{ marginTop: spacing.lg }} />
+        <ActivityIndicator color={t.colors.accent} style={{ marginTop: t.spacing.lg }} />
       </View>
     );
   }
@@ -18,15 +20,16 @@ export default function Index() {
   return <Redirect href={isSignedIn ? '/home' : '/login'} />;
 }
 
-const s = StyleSheet.create({
+const styles = (t) =>
+  StyleSheet.create({
   wrap: {
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: colors.bg,
+    backgroundColor: t.colors.bg,
   },
   wordmark: {
-    ...type.wordmark,
-    color: colors.brandDeep,
+    ...t.type.wordmark,
+    color: t.colors.accentPressed,
   },
 });

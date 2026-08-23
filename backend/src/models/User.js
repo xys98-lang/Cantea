@@ -74,6 +74,28 @@ const userSchema = new mongoose.Schema(
       windowStartedAt: { type: Date, default: null },
     },
 
+    // ===== ĐẶT LẠI MẬT KHẨU =====
+    /** Cùng cấu trúc với verification — dùng lại hạ tầng mã 6 số */
+    passwordReset: {
+      codeHash: { type: String, select: false, default: null },
+      expiresAt: { type: Date, default: null },
+      attempts: { type: Number, default: 0 },
+      lastSentAt: { type: Date, default: null },
+      sendCount: { type: Number, default: 0 },
+      windowStartedAt: { type: Date, default: null },
+    },
+
+    /**
+     * Mốc đổi mật khẩu gần nhất.
+     *
+     * JWT không thu hồi được ở server, nên nếu ai đó đã trộm mật khẩu và
+     * đang đăng nhập, việc đổi mật khẩu sẽ không đuổi họ ra. Middleware
+     * protect so ngày phát hành token với mốc này — token cũ hơn thì
+     * bị từ chối. Đây chính là điều người dùng mong đợi khi họ đặt lại
+     * mật khẩu vì nghi bị xâm nhập.
+     */
+    passwordChangedAt: { type: Date, default: null },
+
     // ===== HỒ SƠ =====
     firstName: { type: String, required: true, trim: true, maxlength: 50 },
     lastName: { type: String, required: true, trim: true, maxlength: 50 },
@@ -151,6 +173,11 @@ userSchema.pre('save', async function (next) {
   try {
     const salt = await bcrypt.genSalt(10);
     this.password = await bcrypt.hash(this.password, salt);
+
+    // Trừ 1 giây: token phát hành ngay sau khi đổi có thể mang timestamp
+    // sớm hơn mốc này vài mili giây, khiến người dùng bị đá ra ngay lập tức
+    if (!this.isNew) this.passwordChangedAt = new Date(Date.now() - 1000);
+
     next();
   } catch (error) {
     next(error);
@@ -177,6 +204,8 @@ userSchema.methods.getPublicProfile = function () {
   delete p.googleId;
   delete p.universityEmail;
   delete p.verification;
+  delete p.passwordReset;
+  delete p.passwordChangedAt;
   delete p.blockedUsers;
   delete p.__v;
   return p;

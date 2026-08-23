@@ -1,7 +1,7 @@
 /**
  * TẦNG CHUẨN HOÁ ĐẦU RA
  *
- * Đây là cửa DUY NHẤT để Post và Comment đi ra ngoài API.
+ * Cửa DUY NHẤT để Post và Comment đi ra ngoài API.
  * Không controller nào được res.json() thẳng document Mongoose.
  *
  * Quy tắc bất di bất dịch:
@@ -14,11 +14,19 @@
 
 const toId = (v) => (v ? String(v._id || v) : null);
 
-/**
- * Dựng thông tin hiển thị của người viết.
- * Trả về object KHÔNG chứa id thật khi ở chế độ ẩn danh.
- */
-const buildAuthorDisplay = ({ authorDoc, isAnonymous, ordinal, isPostAuthor, isMine }) => {
+const buildAuthorDisplay = ({
+  authorDoc,
+  isAnonymous,
+  isOfficial,
+  ordinal,
+  isPostAuthor,
+  isMine,
+}) => {
+  // Tài khoản chính thức luôn hiện danh tính Cantea, không bao giờ ẩn danh
+  if (isOfficial) {
+    return { displayName: 'Cantea', isOfficial: true, isAnonymous: false, avatar: null };
+  }
+
   if (isAnonymous) {
     let label;
     if (isPostAuthor) label = 'Tác giả';
@@ -33,7 +41,6 @@ const buildAuthorDisplay = ({ authorDoc, isAnonymous, ordinal, isPostAuthor, isM
     };
   }
 
-  // Công khai: chỉ trả những trường an toàn, không trả email
   if (!authorDoc || typeof authorDoc !== 'object' || !authorDoc.nickname) {
     return { displayName: 'Người dùng đã xoá', isAnonymous: false, avatar: null };
   }
@@ -46,11 +53,6 @@ const buildAuthorDisplay = ({ authorDoc, isAnonymous, ordinal, isPostAuthor, isM
   };
 };
 
-/**
- * @param post      Document Post (có thể đã populate 'author' khi không ẩn danh)
- * @param viewerId  _id của người đang xem
- * @param opts.likedByMe  người xem đã thích bài này chưa
- */
 export const serializePost = (post, viewerId, opts = {}) => {
   if (!post) return null;
 
@@ -65,14 +67,28 @@ export const serializePost = (post, viewerId, opts = {}) => {
     images: p.images || [],
     category: p.category,
     communityType: p.communityType,
-    university: p.university && p.university.shortName
-      ? { id: toId(p.university), shortName: p.university.shortName, name: p.university.name }
-      : toId(p.university),
+    isOfficial: Boolean(p.isOfficial),
+
+    university:
+      p.university && p.university.shortName
+        ? { id: toId(p.university), shortName: p.university.shortName, name: p.university.name }
+        : toId(p.university),
     faculty: p.faculty || null,
+
+    topic:
+      p.topic && p.topic.title
+        ? {
+            id: toId(p.topic),
+            title: p.topic.title,
+            emoji: p.topic.emoji,
+            color: p.topic.color,
+          }
+        : toId(p.topic),
 
     author: buildAuthorDisplay({
       authorDoc: p.author,
       isAnonymous: p.isAnonymous,
+      isOfficial: p.isOfficial,
       isPostAuthor: p.isAnonymous,
       isMine,
     }),
@@ -81,8 +97,8 @@ export const serializePost = (post, viewerId, opts = {}) => {
     commentCount: p.commentCount || 0,
     views: p.views || 0,
     likedByMe: Boolean(opts.likedByMe),
+    savedByMe: Boolean(opts.savedByMe),
 
-    // Quyền của người xem — frontend dựa vào đây để hiện nút Xoá
     canDelete: Boolean(isMine) || Boolean(opts.isModerator),
     isMine: Boolean(isMine),
 
@@ -91,10 +107,10 @@ export const serializePost = (post, viewerId, opts = {}) => {
     updatedAt: p.updatedAt,
   };
 
-  // Chốt chặn cuối: dù có sai sót ở trên, hai trường này luôn bị xoá
+  // Chốt chặn cuối: dù có sai sót ở trên, các trường này luôn bị xoá
   delete out.likes;
   delete out.anonymousParticipants;
-  if (p.isAnonymous) delete out.author.id;
+  if (p.isAnonymous && !p.isOfficial) delete out.author.id;
 
   return out;
 };
@@ -149,9 +165,8 @@ export const serializePosts = (posts, viewerId, opts = {}) =>
   (posts || []).map((p) =>
     serializePost(p, viewerId, {
       ...opts,
-      likedByMe: opts.likedPostIds
-        ? opts.likedPostIds.has(String(p._id))
-        : false,
+      likedByMe: opts.likedPostIds ? opts.likedPostIds.has(String(p._id)) : false,
+      savedByMe: opts.savedPostIds ? opts.savedPostIds.has(String(p._id)) : false,
     })
   );
 
@@ -159,8 +174,16 @@ export const serializeComments = (comments, viewerId, opts = {}) =>
   (comments || []).map((c) =>
     serializeComment(c, viewerId, {
       ...opts,
-      likedByMe: opts.likedCommentIds
-        ? opts.likedCommentIds.has(String(c._id))
-        : false,
+      likedByMe: opts.likedCommentIds ? opts.likedCommentIds.has(String(c._id)) : false,
     })
   );
+
+export const serializeTopic = (t) => ({
+  id: String(t._id),
+  slug: t.slug,
+  title: t.title,
+  subtitle: t.subtitle || '',
+  emoji: t.emoji || '',
+  color: t.color || '#6366F1',
+  postCount: t.postCount || 0,
+});

@@ -3,25 +3,25 @@ import mongoose from 'mongoose';
 const postSchema = new mongoose.Schema(
   {
     // ===== TÁC GIẢ =====
-    // LƯU Ý: trường này KHÔNG BAO GIỜ được trả thẳng ra API.
-    // Mọi phản hồi phải đi qua serializePost() trong utils/serializers.js
+    // KHÔNG BAO GIỜ trả thẳng ra API — mọi phản hồi đi qua serializePost()
     author: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'User',
       required: true,
-      select: false, // lớp phòng thủ 1: không tự động nạp
+      select: false,
     },
-    isAnonymous: {
-      type: Boolean,
-      default: false,
-    },
+    isAnonymous: { type: Boolean, default: false },
 
     /**
-     * Bảng ánh xạ người dùng → số thứ tự ẩn danh trong bài này.
-     * Giữ cho cùng một người luôn là "Ẩn danh 3" xuyên suốt bài,
-     * giống cơ chế của Everytime.
-     * select: false — đây là dữ liệu nhạy cảm nhất trong schema.
+     * Bài từ tài khoản chính thức của Cantea.
+     *
+     * Dùng cho hướng dẫn, thông báo, nội dung khởi tạo khi cộng đồng
+     * còn mới. Hiển thị kèm huy hiệu để người đọc biết ngay đây không
+     * phải bài của sinh viên — thà bảng tin có ít bài thật còn hơn
+     * nhiều bài giả làm sinh viên.
      */
+    isOfficial: { type: Boolean, default: false },
+
     anonymousParticipants: {
       type: [
         {
@@ -45,7 +45,6 @@ const postSchema = new mongoose.Schema(
       enum: ['global', 'university', 'faculty'],
       default: 'university',
     },
-    // Chuyển từ String sang ObjectId để mở rộng ra Hà Nội / Đà Nẵng
     university: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'University',
@@ -53,23 +52,34 @@ const postSchema = new mongoose.Schema(
     },
     faculty: { type: String, default: null },
 
+    /**
+     * CHUYÊN MỤC
+     *
+     * Rút từ 7 xuống 5 theo bản thiết kế v4.0. Hai mục được thêm vì sinh
+     * viên bàn nhiều nhất: Ký túc xá và Việc làm. Bốn mục bị bỏ:
+     *
+     *   Hỏi đáp    — mọi bài đều là hỏi đáp, tách riêng không giúp lọc
+     *   Sự kiện    — gộp vào Chuyện trường
+     *   Sách vở    — Canlib đã lo mảng này
+     *   Nhóm học   — gộp vào Học tập
+     *
+     * Ít mục thì người đăng đỡ phải cân nhắc, và mỗi mục đủ đông bài để
+     * đáng mở ra xem. Bảy mục với vài chục bài thì mục nào cũng vắng.
+     *
+     * "Chính thức" KHÔNG nằm ở đây — nó là cờ isOfficial bên dưới, vì
+     * một bài chính thức vẫn thuộc một chuyên mục nào đó.
+     */
     category: {
       type: String,
-      enum: [
-        'Academics',
-        'Student Life',
-        'Events',
-        'Q&A',
-        'General',
-        'Book Exchange',
-        'Study Group',
-      ],
+      enum: ['General', 'Academics', 'Housing', 'CampusLife', 'Jobs'],
       default: 'General',
+      index: true,
     },
 
+    /** Chủ đề theo mùa, ví dụ "Tân sinh viên 2026". Không bắt buộc. */
+    topic: { type: mongoose.Schema.Types.ObjectId, ref: 'Topic', default: null },
+
     // ===== TƯƠNG TÁC =====
-    // Mảng likes không bao giờ trả nguyên ra API — chỉ trả likeCount
-    // và likedByMe, vì danh sách người thích có thể làm lộ tác giả ẩn danh.
     likes: { type: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }], select: false },
     likeCount: { type: Number, default: 0 },
     commentCount: { type: Number, default: 0 },
@@ -80,6 +90,16 @@ const postSchema = new mongoose.Schema(
     isFlagged: { type: Boolean, default: false },
     flagCount: { type: Number, default: 0 },
     flagReason: { type: String, default: null },
+    /**
+     * Tác giả tự gỡ bài khỏi bảng Đang nổi.
+     *
+     * Bài VẪN nằm trong bảng tin và vẫn đọc được — chỉ không được đẩy
+     * lên bảng xếp hạng nữa. Đây là van an toàn cho người đăng ẩn danh:
+     * khi bài lan quá nhanh, chi tiết trong bài có thể đủ để người quen
+     * nhận ra, và họ cần cách hãm lại mà không phải xoá bài.
+     */
+    excludedFromTrending: { type: Boolean, default: false },
+
     isDeleted: { type: Boolean, default: false },
     deletedAt: Date,
     deletedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', select: false },
@@ -91,21 +111,17 @@ const postSchema = new mongoose.Schema(
 );
 
 // ===== INDEXES =====
-// Truy vấn chính: bảng tin của một trường, mới nhất trước
 postSchema.index({ university: 1, isDeleted: 1, isPinned: -1, createdAt: -1 });
-// Bảng tin toàn quốc cho người dùng chưa xác thực
 postSchema.index({ communityType: 1, isDeleted: 1, createdAt: -1 });
-// Lọc theo chuyên mục trong một trường
 postSchema.index({ university: 1, category: 1, isDeleted: 1, createdAt: -1 });
-// Bài của chính mình
+
+/** Lọc bài ứng viên cho bảng Đang nổi */
+postSchema.index({ communityType: 1, excludedFromTrending: 1, isDeleted: 1, createdAt: -1 });
+postSchema.index({ topic: 1, isDeleted: 1, createdAt: -1 });
 postSchema.index({ author: 1, createdAt: -1 });
-// Hàng đợi kiểm duyệt
 postSchema.index({ isFlagged: 1, isDeleted: 1 });
 
-/**
- * Cấp số thứ tự ẩn danh cho một người trong bài này.
- * Nếu người đó đã có số rồi thì trả lại số cũ.
- */
+/** Cấp số thứ tự ẩn danh ổn định cho một người trong phạm vi bài này */
 postSchema.statics.resolveAnonymousOrdinal = async function (postId, userId) {
   const post = await this.findById(postId).select('+anonymousParticipants');
   if (!post) return null;
@@ -117,7 +133,6 @@ postSchema.statics.resolveAnonymousOrdinal = async function (postId, userId) {
 
   const nextOrdinal = (post.anonymousParticipants || []).length + 1;
 
-  // Điều kiện $ne đảm bảo không cấp trùng khi có hai request cùng lúc
   await this.updateOne(
     { _id: postId, 'anonymousParticipants.user': { $ne: userId } },
     { $push: { anonymousParticipants: { user: userId, ordinal: nextOrdinal } } }

@@ -2,6 +2,9 @@ import express from 'express';
 import rateLimit from 'express-rate-limit';
 import {
   getFeed,
+  getTopics,
+  getPostQuota,
+  getMyPosts,
   createPost,
   getPost,
   deletePost,
@@ -54,6 +57,11 @@ router.use(protect);
  */
 
 // Đọc
+router.get('/topics', getTopics);
+router.get('/quota', getPostQuota);
+
+// Đặt trước '/posts/:id' để 'mine' không bị hiểu là mã bài
+router.get('/posts/mine', getMyPosts);
 router.get('/feed', getFeed);
 router.get('/posts/:id', getPost);
 router.get('/posts/:id/comments', getComments);

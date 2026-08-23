@@ -3,6 +3,7 @@ import {
   ActivityIndicator,
   Alert,
   KeyboardAvoidingView,
+  Modal,
   Platform,
   Pressable,
   ScrollView,
@@ -14,7 +15,12 @@ import {
 import { useRouter, useLocalSearchParams, useFocusEffect } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import { Notice, Rule } from '../src/components/ui';
+import { AuthorName, Notice, Rule } from '../src/components/ui';
+import {
+  savePost as apiSavePost,
+  unsavePost as apiUnsavePost,
+  fetchCollections,
+} from '../src/api/bookmarks';
 import {
   fetchPost,
   fetchComments,
@@ -26,9 +32,11 @@ import {
   categoryLabel,
   timeAgo,
 } from '../src/api/community';
-import { colors, radius, spacing, type } from '../src/theme';
+import { useTheme, useThemedStyles } from '../src/store/theme';
 
 export default function PostDetail() {
+  const t = useTheme();
+  const s = useThemedStyles(styles);
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { id } = useLocalSearchParams();
@@ -36,6 +44,8 @@ export default function PostDetail() {
   const [post, setPost] = useState(null);
   const [comments, setComments] = useState([]);
   const [text, setText] = useState('');
+  const [collections, setCollections] = useState([]);
+  const [pickerOpen, setPickerOpen] = useState(false);
   const [anonymous, setAnonymous] = useState(true);
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
@@ -47,6 +57,7 @@ export default function PostDetail() {
       const [p, c] = await Promise.all([fetchPost(id), fetchComments(id)]);
       setPost(p);
       setComments(c.comments || []);
+      fetchCollections().then(setCollections).catch(() => {});
     } catch (e) {
       setError(e.message || 'Không tải được bài viết');
     } finally {
@@ -73,6 +84,33 @@ export default function PostDetail() {
       setPost((p) => ({ ...p, likedByMe: data.liked, likeCount: data.likeCount }));
     } catch {
       load();
+    }
+  };
+
+  /** Bấm nhanh = lưu vào bộ mặc định. Nhấn giữ = chọn bộ sưu tập. */
+  const toggleSave = async () => {
+    if (!post) return;
+    const next = !post.savedByMe;
+    setPost((p) => ({ ...p, savedByMe: next }));
+
+    try {
+      if (next) await apiSavePost(id);
+      else await apiUnsavePost(id);
+    } catch (e) {
+      setPost((p) => ({ ...p, savedByMe: !next }));
+      setError(e.message || 'Không lưu được');
+    }
+  };
+
+  const saveTo = async (collectionId) => {
+    setPickerOpen(false);
+    try {
+      const res = await apiSavePost(id, collectionId);
+      setPost((p) => ({ ...p, savedByMe: true }));
+      fetchCollections().then(setCollections).catch(() => {});
+      if (res?.message) Alert.alert('Đã lưu', res.message);
+    } catch (e) {
+      setError(e.message || 'Không lưu được');
     }
   };
 
@@ -146,21 +184,21 @@ export default function PostDetail() {
   if (loading) {
     return (
       <View style={s.center}>
-        <ActivityIndicator color={colors.brand} />
+        <ActivityIndicator color={t.colors.accent} />
       </View>
     );
   }
 
   return (
     <KeyboardAvoidingView
-      style={{ flex: 1, backgroundColor: colors.bg }}
+      style={{ flex: 1, backgroundColor: t.colors.bg }}
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       keyboardVerticalOffset={0}
     >
       <ScrollView
         contentContainerStyle={[
           s.scroll,
-          { paddingTop: insets.top + spacing.md, paddingBottom: spacing.xl },
+          { paddingTop: insets.top + t.spacing.md, paddingBottom: t.spacing.xl },
         ]}
         keyboardShouldPersistTaps="handled"
       >
@@ -168,11 +206,25 @@ export default function PostDetail() {
           <Pressable onPress={() => router.back()} hitSlop={8}>
             <Text style={s.backText}>← Quay lại</Text>
           </Pressable>
-          {post?.canDelete && (
-            <Pressable onPress={removePost} hitSlop={8}>
-              <Text style={s.deleteText}>Xoá bài</Text>
+          <View style={s.topActions}>
+            <Pressable
+              onPress={toggleSave}
+              onLongPress={() => setPickerOpen(true)}
+              hitSlop={8}
+              accessibilityLabel="Lưu bài viết"
+            >
+              <Ionicons
+                name={post?.savedByMe ? 'bookmark' : 'bookmark-outline'}
+                size={21}
+                color={post?.savedByMe ? t.colors.accent : t.colors.inkMuted}
+              />
             </Pressable>
-          )}
+            {post?.canDelete && (
+              <Pressable onPress={removePost} hitSlop={8}>
+                <Text style={s.deleteText}>Xoá bài</Text>
+              </Pressable>
+            )}
+          </View>
         </View>
 
         <Notice>{error}</Notice>
@@ -185,9 +237,9 @@ export default function PostDetail() {
             </View>
 
             <Text style={s.title}>{post.title}</Text>
-            <Rule style={{ marginBottom: spacing.md }} />
+            <Rule style={{ marginBottom: t.spacing.md }} />
 
-            <Text style={s.author}>{post.author?.displayName}</Text>
+            <AuthorName author={post.author} size={14} style={s.authorLine} />
             <Text style={s.body}>{post.content}</Text>
 
             <View style={s.actions}>
@@ -195,15 +247,30 @@ export default function PostDetail() {
                 <Ionicons
                   name={post.likedByMe ? 'heart' : 'heart-outline'}
                   size={18}
-                  color={post.likedByMe ? colors.brand : colors.inkMuted}
+                  color={post.likedByMe ? t.colors.accent : t.colors.inkMuted}
                 />
-                <Text style={[s.likeNum, post.likedByMe && { color: colors.brand }]}>
+                <Text style={[s.likeNum, post.likedByMe && { color: t.colors.accent }]}>
                   {post.likeCount}
                 </Text>
               </Pressable>
-              <Text style={s.views}>{post.views} lượt xem</Text>
+              <View style={s.rightActions}>
+                <Text style={s.views}>{post.views} lượt xem</Text>
+                <Pressable onPress={() => setPickerOpen(true)} hitSlop={6}>
+                  <Text style={s.saveTo}>
+                    {post.savedByMe ? 'Đổi bộ sưu tập' : 'Lưu vào…'}
+                  </Text>
+                </Pressable>
+              </View>
             </View>
           </>
+        )}
+
+        {!post?.isMine && !post?.isOfficial && (
+          <Pressable onPress={() => router.push(`/chat?post=${id}`)} style={s.dmRow}>
+            <Ionicons name="chatbubble-outline" size={16} color={t.colors.ink} />
+            <Text style={s.dmText}>Nhắn riêng cho tác giả</Text>
+            <Ionicons name="chevron-forward" size={15} color={t.colors.icon} />
+          </Pressable>
         )}
 
         <Text style={s.commentsLabel}>
@@ -235,9 +302,9 @@ export default function PostDetail() {
                     <Ionicons
                       name={c.likedByMe ? 'heart' : 'heart-outline'}
                       size={14}
-                      color={c.likedByMe ? colors.brand : colors.inkFaint}
+                      color={c.likedByMe ? t.colors.accent : t.colors.inkMuted}
                     />
-                    <Text style={[s.likeNumSm, c.likedByMe && { color: colors.brand }]}>
+                    <Text style={[s.likeNumSm, c.likedByMe && { color: t.colors.accent }]}>
                       {c.likeCount}
                     </Text>
                   </Pressable>
@@ -253,7 +320,38 @@ export default function PostDetail() {
         )}
       </ScrollView>
 
-      <View style={[s.composer, { paddingBottom: insets.bottom + spacing.sm }]}>
+      <Modal
+        visible={pickerOpen}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setPickerOpen(false)}
+      >
+        <Pressable style={s.backdrop} onPress={() => setPickerOpen(false)}>
+          <Pressable style={s.sheet} onPress={(e) => e.stopPropagation()}>
+            <Text style={s.sheetTitle}>Lưu vào bộ sưu tập</Text>
+            {collections.map((c) => (
+              <Pressable key={c.id} onPress={() => saveTo(c.id)} style={s.colRow}>
+                <Text style={s.colName}>
+                  {c.emoji ? `${c.emoji}  ` : ''}
+                  {c.name}
+                </Text>
+                <Text style={s.colCount}>{c.itemCount}</Text>
+              </Pressable>
+            ))}
+            <Pressable
+              onPress={() => {
+                setPickerOpen(false);
+                router.push('/saved');
+              }}
+              style={s.colRow}
+            >
+              <Text style={[s.colName, { color: t.colors.accentPressed }]}>+  Tạo bộ sưu tập mới</Text>
+            </Pressable>
+          </Pressable>
+        </Pressable>
+      </Modal>
+
+      <View style={[s.composer, { paddingBottom: insets.bottom + t.spacing.sm }]}>
         <Pressable
           onPress={() => setAnonymous((a) => !a)}
           style={[s.anonToggle, anonymous && s.anonOn]}
@@ -262,7 +360,7 @@ export default function PostDetail() {
           <Ionicons
             name={anonymous ? 'eye-off' : 'eye-outline'}
             size={16}
-            color={anonymous ? colors.white : colors.inkMuted}
+            color={anonymous ? t.colors.onAccent : t.colors.inkMuted}
           />
         </Pressable>
 
@@ -271,7 +369,7 @@ export default function PostDetail() {
           value={text}
           onChangeText={setText}
           placeholder={anonymous ? 'Bình luận ẩn danh…' : 'Bình luận công khai…'}
-          placeholderTextColor={colors.inkFaint}
+          placeholderTextColor={t.colors.inkMuted}
           multiline
           maxLength={1000}
         />
@@ -283,9 +381,9 @@ export default function PostDetail() {
           hitSlop={6}
         >
           {sending ? (
-            <ActivityIndicator color={colors.white} size="small" />
+            <ActivityIndicator color={t.colors.onAccent} size="small" />
           ) : (
-            <Ionicons name="arrow-up" size={18} color={colors.white} />
+            <Ionicons name="arrow-up" size={18} color={t.colors.onAccent} />
           )}
         </Pressable>
       </View>
@@ -293,60 +391,96 @@ export default function PostDetail() {
   );
 }
 
-const s = StyleSheet.create({
-  center: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.bg },
-  scroll: { paddingHorizontal: spacing.lg },
+const styles = (t) =>
+  StyleSheet.create({
+  center: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: t.colors.bg },
+  scroll: { paddingHorizontal: t.spacing.lg },
 
   topBar: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingVertical: spacing.sm,
-    marginBottom: spacing.sm,
+    paddingVertical: t.spacing.sm,
+    marginBottom: t.spacing.sm,
   },
-  backText: { ...type.label, color: colors.brandDeep },
-  deleteText: { ...type.label, color: colors.dangerInk },
+  backText: { ...t.type.label, color: t.colors.accentPressed },
+  deleteText: { ...t.type.label, color: t.colors.alertInk },
+  topActions: { flexDirection: 'row', alignItems: 'center', gap: t.spacing.md },
+  rightActions: { flexDirection: 'row', alignItems: 'center', gap: t.spacing.md },
+  saveTo: { ...t.type.caption, color: t.colors.accentPressed },
+  dmRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: t.spacing.sm,
+    borderWidth: 1,
+    borderColor: t.colors.lineStrong,
+    borderRadius: t.radius.md,
+    paddingHorizontal: t.spacing.md,
+    paddingVertical: 13,
+    marginTop: t.spacing.md,
+  },
+  dmText: { ...t.type.label, color: t.colors.ink, flex: 1 },
 
-  postHead: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
+  backdrop: { flex: 1, backgroundColor: 'rgba(30,27,75,0.45)', justifyContent: 'flex-end' },
+  sheet: {
+    backgroundColor: t.colors.surface,
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    padding: t.spacing.lg,
+    paddingBottom: t.spacing.xl,
+  },
+  sheetTitle: { ...t.type.heading, color: t.colors.ink, marginBottom: t.spacing.md },
+  colRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: t.colors.line,
+  },
+  colName: { ...t.type.body, fontSize: 15, color: t.colors.ink },
+  colCount: { ...t.type.caption, color: t.colors.inkMuted },
+
+  postHead: { flexDirection: 'row', alignItems: 'center', gap: t.spacing.sm },
   cat: {
-    ...type.micro,
-    color: colors.brandDeep,
-    backgroundColor: colors.brandSoft,
+    ...t.type.micro,
+    color: t.colors.accentPressed,
+    backgroundColor: t.colors.fill,
     paddingHorizontal: 8,
     paddingVertical: 3,
-    borderRadius: radius.sm,
+    borderRadius: t.radius.sm,
     overflow: 'hidden',
   },
-  time: { ...type.caption, color: colors.inkFaint },
+  time: { ...t.type.caption, color: t.colors.inkMuted },
 
-  title: { ...type.title, fontSize: 23, color: colors.ink, marginTop: spacing.sm },
-  author: { ...type.label, color: colors.inkMuted, marginBottom: spacing.md },
-  body: { ...type.body, color: colors.ink },
+  title: { ...t.type.title, fontSize: 23, color: t.colors.ink, marginTop: t.spacing.sm },
+  authorLine: { marginBottom: t.spacing.md },
+  body: { ...t.type.body, color: t.colors.ink },
 
   actions: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginTop: spacing.lg,
-    paddingBottom: spacing.md,
+    marginTop: t.spacing.lg,
+    paddingBottom: t.spacing.md,
     borderBottomWidth: 1,
-    borderBottomColor: colors.border,
+    borderBottomColor: t.colors.line,
   },
   likeBtn: { flexDirection: 'row', alignItems: 'center' },
-  likeNum: { ...type.label, color: colors.inkMuted, marginLeft: 6 },
-  likeNumSm: { ...type.caption, color: colors.inkFaint, marginLeft: 4 },
-  views: { ...type.caption, color: colors.inkFaint },
+  likeNum: { ...t.type.label, color: t.colors.inkMuted, marginLeft: 6 },
+  likeNumSm: { ...t.type.caption, color: t.colors.inkMuted, marginLeft: 4 },
+  views: { ...t.type.caption, color: t.colors.inkMuted },
 
-  commentsLabel: { ...type.micro, color: colors.inkFaint, marginTop: spacing.lg, marginBottom: spacing.md },
-  noComment: { ...type.caption, color: colors.inkFaint },
+  commentsLabel: { ...t.type.micro, color: t.colors.inkMuted, marginTop: t.spacing.lg, marginBottom: t.spacing.md },
+  noComment: { ...t.type.caption, color: t.colors.inkMuted },
 
   comment: {
-    backgroundColor: colors.surface,
+    backgroundColor: t.colors.surface,
     borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: radius.md,
-    padding: spacing.md,
-    marginBottom: spacing.sm,
+    borderColor: t.colors.line,
+    borderRadius: t.radius.md,
+    padding: t.spacing.md,
+    marginBottom: t.spacing.sm,
   },
   commentHead: {
     flexDirection: 'row',
@@ -354,50 +488,50 @@ const s = StyleSheet.create({
     alignItems: 'center',
     marginBottom: 6,
   },
-  commentAuthor: { ...type.label, color: colors.inkMuted },
+  commentAuthor: { ...t.type.label, color: t.colors.inkMuted },
   // Chủ bài viết được đánh dấu khác màu để dễ theo mạch hội thoại
-  commentAuthorOp: { color: colors.brandDeep },
-  commentText: { ...type.body, fontSize: 15, color: colors.ink },
-  commentDeleted: { color: colors.inkFaint, fontStyle: 'italic' },
+  commentAuthorOp: { color: t.colors.accentPressed },
+  commentText: { ...t.type.body, fontSize: 15, color: t.colors.ink },
+  commentDeleted: { color: t.colors.inkMuted, fontStyle: 'italic' },
   commentFoot: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginTop: spacing.sm,
+    marginTop: t.spacing.sm,
   },
-  removeSm: { ...type.caption, color: colors.dangerInk },
+  removeSm: { ...t.type.caption, color: t.colors.alertInk },
 
   composer: {
     flexDirection: 'row',
     alignItems: 'flex-end',
-    gap: spacing.sm,
-    paddingHorizontal: spacing.md,
-    paddingTop: spacing.sm,
-    backgroundColor: colors.surface,
+    gap: t.spacing.sm,
+    paddingHorizontal: t.spacing.md,
+    paddingTop: t.spacing.sm,
+    backgroundColor: t.colors.surface,
     borderTopWidth: 1,
-    borderTopColor: colors.border,
+    borderTopColor: t.colors.line,
   },
   anonToggle: {
     width: 38,
     height: 38,
-    borderRadius: radius.md,
+    borderRadius: t.radius.md,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: colors.bg,
+    backgroundColor: t.colors.bg,
     borderWidth: 1,
-    borderColor: colors.border,
+    borderColor: t.colors.line,
   },
-  anonOn: { backgroundColor: colors.brand, borderColor: colors.brand },
+  anonOn: { backgroundColor: t.colors.accent, borderColor: t.colors.accent },
   input: {
     flex: 1,
-    ...type.body,
+    ...t.type.body,
     fontSize: 15,
-    color: colors.ink,
-    backgroundColor: colors.bg,
+    color: t.colors.ink,
+    backgroundColor: t.colors.bg,
     borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: radius.md,
-    paddingHorizontal: spacing.md,
+    borderColor: t.colors.line,
+    borderRadius: t.radius.md,
+    paddingHorizontal: t.spacing.md,
     paddingTop: 9,
     paddingBottom: 9,
     maxHeight: 110,
@@ -405,8 +539,8 @@ const s = StyleSheet.create({
   send: {
     width: 38,
     height: 38,
-    borderRadius: radius.md,
-    backgroundColor: colors.brand,
+    borderRadius: t.radius.md,
+    backgroundColor: t.colors.accent,
     alignItems: 'center',
     justifyContent: 'center',
   },

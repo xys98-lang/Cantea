@@ -53,6 +53,19 @@ export const protect = async (req, res, next) => {
       });
     }
 
+    /**
+     * Token phát hành trước lần đổi mật khẩu gần nhất coi như hết hiệu lực.
+     * Đây là thứ khiến việc đặt lại mật khẩu thực sự đuổi được kẻ xâm nhập
+     * ra khỏi tài khoản, thay vì chỉ chặn lần đăng nhập tiếp theo.
+     */
+    if (user.passwordChangedAt && decoded.iat * 1000 < user.passwordChangedAt.getTime()) {
+      return res.status(401).json({
+        status: 'error',
+        code: 'PASSWORD_CHANGED',
+        message: 'Mật khẩu đã được đổi. Vui lòng đăng nhập lại.',
+      });
+    }
+
     // Tài khoản bị khoá thì chặn ngay, dù token còn hạn
     if (!user.isActive) {
       return res.status(403).json({

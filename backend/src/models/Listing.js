@@ -1,235 +1,148 @@
 import mongoose from 'mongoose';
 
-// Review Schema (nested in Listing for feedback)
-const reviewSchema = new mongoose.Schema(
-  {
-    reviewer: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: 'User',
-      required: true,
-    },
-    rating: {
-      type: Number,
-      min: 1,
-      max: 5,
-      required: true,
-    },
-    comment: {
-      type: String,
-      maxlength: 500,
-      default: '',
-    },
-  },
-  {
-    timestamps: true,
-  }
-);
-
-// Main Listing Schema
+/**
+ * Tin đăng trên Canlib.
+ *
+ * NGOẠI LỆ DUY NHẤT CỦA QUY TẮC ẨN DANH: tin đăng không bao giờ ẩn danh.
+ * Người mua cần đủ tín hiệu để dám hẹn gặp và trao đồ, nên biệt danh,
+ * khoa và khoá của người bán luôn hiện. Điều này phải được nói rõ trước
+ * khi người dùng gõ chữ đầu tiên — họ vừa từ tab Cộng đồng sang, nơi ẩn
+ * danh bật sẵn, nên mặc định trong đầu họ là "mình vẫn ẩn".
+ */
 const listingSchema = new mongoose.Schema(
   {
-    // Seller
     seller: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'User',
       required: true,
     },
-    
-    // Book Information
-    title: {
-      type: String,
+    /**
+     * Tin thuộc về một trường cụ thể. Sách giáo trình chỉ có giá trị với
+     * người học cùng môn, và quan trọng hơn — hẹn gặp trong khuôn viên
+     * trường an toàn hơn hẹn với người lạ ở thành phố khác.
+     */
+    university: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'University',
       required: true,
-      trim: true,
-      maxlength: 200,
     },
-    author: {
+
+    title: { type: String, required: true, trim: true, maxlength: 120 },
+    description: { type: String, trim: true, maxlength: 2000, default: '' },
+
+    /** Ảnh đầu tiên là ảnh bìa — nó quyết định tin có được bấm vào không */
+    images: {
+      type: [String],
+      validate: {
+        validator: (v) => v.length <= 5,
+        message: 'Tối đa 5 ảnh',
+      },
+      default: [],
+    },
+
+    /**
+     * Giáo trình và đề cương gộp thành "material".
+     *
+     * Ranh giới giữa hai thứ đó mờ — một tập photo có cả đề cương lẫn
+     * bài giảng thì xếp vào đâu? Người đăng phải đoán, người tìm cũng
+     * phải đoán, và cuối cùng phải mở cả hai mục. Gộp lại thì không ai
+     * phải đoán nữa.
+     *
+     * "book" tách riêng cho sách không phải tài liệu học — sách kỹ năng,
+     * tiểu thuyết, sách tham khảo. Đây là nhu cầu khác hẳn: mua giáo
+     * trình là bắt buộc, mua sách đọc là tuỳ hứng.
+     */
+    category: {
       type: String,
-      required: true,
-      trim: true,
+      enum: ['material', 'book', 'supplies', 'other'],
+      default: 'material',
     },
-    isbn: {
+    /** Mã môn mà tài liệu này dùng cho — giúp tìm đúng sách cần */
+    courseCode: { type: String, trim: true, uppercase: true, maxlength: 20, default: '' },
+
+    dealType: {
       type: String,
-      default: '',
+      enum: ['sell', 'give', 'exchange'],
+      default: 'sell',
     },
-    description: {
-      type: String,
-      default: '',
-      maxlength: 1000,
-    },
-    
-    // Course Info (optional)
-    courseCode: {
-      type: String,
-      default: '',
-    },
-    courseName: {
-      type: String,
-      default: '',
-    },
-    faculty: {
-      type: String,
-      default: '',
-    },
-    
-    // Condition
+    price: { type: Number, min: 0, default: 0 },
+    /** Giá bìa — để tính phần trăm giảm, con số có nghĩa thật với sách cũ */
+    originalPrice: { type: Number, min: 0, default: null },
+
     condition: {
       type: String,
-      enum: ['new', 'like-new', 'good', 'fair', 'poor'],
-      required: true,
+      enum: ['new', 'like_new', 'good', 'fair'],
+      default: 'good',
     },
-    
-    // Pricing & Exchange
-    price: {
-      type: Number,
-      default: null, // null if only trading
-    },
-    currency: {
-      type: String,
-      default: 'VND',
-    },
-    
-    exchangeType: {
-      type: String,
-      enum: ['sell', 'trade', 'both'],
-      default: 'both',
-    },
-    
-    wantedBooks: [{
-      title: String,
-      author: String,
-      isbn: String,
-    }],
-    
-    // Media
-    images: [{
-      type: String, // URLs
-    }],
-    
-    // Location
-    university: {
-      type: String,
-      required: true,
-    },
-    meetingLocation: {
-      type: String, // e.g., "RMIT Library", "Student Cafe"
-      default: '',
-    },
-    
-    // Status
+
+    /**
+     * Trạng thái tin.
+     *
+     * Không có trạng thái đóng thì tin chết nằm lại trong lưới, người mua
+     * vẫn nhắn, người bán vẫn phải trả lời "hết rồi". Sau vài tuần lưới
+     * đầy tin không còn hiệu lực và người dùng bỏ đi.
+     */
     status: {
       type: String,
-      enum: ['available', 'pending', 'sold', 'exchanged', 'removed'],
-      default: 'available',
+      enum: ['active', 'reserved', 'sold', 'hidden'],
+      default: 'active',
     },
-    
-    // Sold/Exchanged Info
-    buyer: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: 'User',
-      default: null,
+    soldAt: { type: Date, default: null },
+
+    /**
+     * Tin tự hết hạn sau 30 ngày. Người bán có thể đẩy lại để gia hạn.
+     * Nếu không, lưới sẽ đầy tin bỏ quên từ học kỳ trước.
+     */
+    bumpedAt: { type: Date, default: Date.now },
+    expiresAt: {
+      type: Date,
+      default: () => new Date(Date.now() + 30 * 24 * 3600 * 1000),
     },
-    soldAt: Date,
-    exchangedWith: {
-      listingId: {
-        type: mongoose.Schema.Types.ObjectId,
-        ref: 'Listing',
-      },
-      userId: {
-        type: mongoose.Schema.Types.ObjectId,
-        ref: 'User',
-      },
-    },
-    
-    // Engagement
-    views: {
-      type: Number,
-      default: 0,
-    },
-    favorites: [{
-      type: mongoose.Schema.Types.ObjectId,
-      ref: 'User',
-    }],
-    favoriteCount: {
-      type: Number,
-      default: 0,
-    },
-    
-    // Reviews & Rating
-    reviews: [reviewSchema],
-    averageRating: {
-      type: Number,
-      default: null,
-      min: 1,
-      max: 5,
-    },
-    
-    // Moderation
-    isFlagged: {
-      type: Boolean,
-      default: false,
-    },
-    flagReason: {
-      type: String,
-      default: null,
-    },
-    isActive: {
-      type: Boolean,
-      default: true,
-    },
-    
-    // Activity
-    lastActive: Date,
+
+    viewCount: { type: Number, default: 0 },
+    saveCount: { type: Number, default: 0 },
+    messageCount: { type: Number, default: 0 },
+
+    isFlagged: { type: Boolean, default: false },
+    flagCount: { type: Number, default: 0 },
+    isDeleted: { type: Boolean, default: false },
+    deletedAt: { type: Date, default: null },
   },
-  {
-    timestamps: true,
-  }
+  { timestamps: true }
 );
 
-// Method to add review
-listingSchema.methods.addReview = function (reviewerId, rating, comment) {
-  const review = {
-    reviewer: reviewerId,
-    rating,
-    comment,
-  };
-  this.reviews.push(review);
-  
-  // Recalculate average rating
-  if (this.reviews.length > 0) {
-    const avgRating = this.reviews.reduce((sum, r) => sum + r.rating, 0) / this.reviews.length;
-    this.averageRating = Math.round(avgRating * 10) / 10;
-  }
-  
-  return review;
-};
+// Lưới chính: tin đang bán của một trường, mới đẩy lên trước
+listingSchema.index({ university: 1, status: 1, isDeleted: 1, bumpedAt: -1 });
+listingSchema.index({ university: 1, category: 1, status: 1, bumpedAt: -1 });
+listingSchema.index({ university: 1, courseCode: 1, status: 1 });
+listingSchema.index({ seller: 1, createdAt: -1 });
+listingSchema.index({ expiresAt: 1 });
 
-// Method to toggle favorite
-listingSchema.methods.toggleFavorite = function (userId) {
-  const index = this.favorites.indexOf(userId);
-  if (index > -1) {
-    this.favorites.splice(index, 1);
-    this.favoriteCount--;
-  } else {
-    this.favorites.push(userId);
-    this.favoriteCount++;
-  }
-};
+/**
+ * Tìm kiếm toàn văn. Trọng số cao nhất cho mã môn vì sinh viên tìm sách
+ * thường gõ đúng mã môn họ đang học ("CTDL", "MAT1093"), chứ ít khi nhớ
+ * chính xác tên sách.
+ */
+listingSchema.index(
+  { courseCode: 'text', title: 'text', description: 'text' },
+  { weights: { courseCode: 10, title: 5, description: 1 }, name: 'listing_search' }
+);
 
-// Method to mark as sold
-listingSchema.methods.markAsSold = function (buyerId) {
-  this.status = 'sold';
-  this.buyer = buyerId;
-  this.soldAt = new Date();
-};
+/**
+ * Tin đã bán vẫn nằm trong lưới thêm 7 ngày rồi mới ẩn.
+ * Người mua hụt thấy được mặt bằng giá, người bán mới biết nên ra giá bao nhiêu.
+ */
+listingSchema.virtual('shouldShow').get(function () {
+  if (this.isDeleted || this.status === 'hidden') return false;
+  if (this.status !== 'sold') return new Date() < this.expiresAt;
+  return this.soldAt && Date.now() - this.soldAt.getTime() < 7 * 24 * 3600 * 1000;
+});
 
-// Indexes for faster queries
-listingSchema.index({ seller: 1, status: 1 });
-listingSchema.index({ university: 1, status: 1 });
-listingSchema.index({ title: 'text', author: 'text', description: 'text' });
-listingSchema.index({ status: 1, createdAt: -1 });
-listingSchema.index({ favoriteCount: -1 });
-listingSchema.index({ averageRating: -1 });
-listingSchema.index({ courseCode: 1 });
+/** Phần trăm giảm so với giá bìa — chỉ tính khi có đủ hai giá */
+listingSchema.virtual('discountPercent').get(function () {
+  if (!this.originalPrice || !this.price || this.price >= this.originalPrice) return null;
+  return Math.round((1 - this.price / this.originalPrice) * 100);
+});
 
 const Listing = mongoose.model('Listing', listingSchema);
 

@@ -2,6 +2,7 @@ import Joi from 'joi';
 import mongoose from 'mongoose';
 import Schedule from '../models/Schedule.js';
 import User from '../models/User.js';
+import CourseOffering from '../models/CourseOffering.js';
 import {
   DEFAULT_PERIODS,
   resolvePeriods,
@@ -11,9 +12,9 @@ import {
   isValidTime,
   jsDayToVn,
 } from '../utils/periods.js';
+import { parseUEH } from '../utils/uehParser.js';
 import { logger } from '../utils/logger.js';
 
-/** Bảng màu cho các môn trên lưới thời khoá biểu */
 const COURSE_COLORS = [
   '#6366F1',
   '#0EA5E9',
@@ -27,12 +28,6 @@ const COURSE_COLORS = [
 
 const timePattern = /^([01]\d|2[0-3]):([0-5]\d)$/;
 
-/**
- * Một buổi học nhập được theo hai cách:
- *   - theo tiết: fromPeriod + toPeriod
- *   - theo giờ:  startTime + endTime
- * Bắt buộc chọn một trong hai, không phải cả hai.
- */
 const meetingInput = Joi.object({
   dayOfWeek: Joi.number().integer().min(2).max(8).required().messages({
     'any.required': 'Chọn thứ trong tuần',
@@ -41,6 +36,7 @@ const meetingInput = Joi.object({
   toPeriod: Joi.number().integer().min(1).max(30),
   startTime: Joi.string().pattern(timePattern),
   endTime: Joi.string().pattern(timePattern),
+  campus: Joi.string().trim().uppercase().max(20).allow('').default(''),
   room: Joi.string().trim().max(50).allow('').default(''),
   building: Joi.string().trim().max(50).allow('').default(''),
   note: Joi.string().trim().max(200).allow('').default(''),
@@ -79,12 +75,13 @@ const periodsInput = Joi.object({
     .min(1)
     .max(30)
     .required(),
+  // Có tính lại giờ các môn đã nhập theo khung mới không
+  remapCourses: Joi.boolean().default(false),
 });
 
 const badId = (res) =>
   res.status(400).json({ status: 'error', code: 'INVALID_ID', message: 'ID không hợp lệ' });
 
-/** Quy đổi tiết sang giờ, kiểm tra hợp lệ */
 const normalizeMeetings = (meetings, periods) => {
   const out = [];
 
@@ -117,6 +114,7 @@ const normalizeMeetings = (meetings, periods) => {
       dayOfWeek: m.dayOfWeek,
       startTime,
       endTime,
+      campus: m.campus || '',
       room: m.room || '',
       building: m.building || '',
       note: m.note || '',
@@ -126,7 +124,7 @@ const normalizeMeetings = (meetings, periods) => {
   return out;
 };
 
-/** Tìm các buổi học đè lên nhau. Chỉ cảnh báo, không chặn — lịch bù là chuyện thường. */
+/** Buổi học đè lên nhau. Chỉ cảnh báo, không chặn — lịch bù là chuyện thường. */
 const findConflicts = (newMeetings, existingCourses, skipId = null) => {
   const conflicts = [];
 
@@ -155,22 +153,163 @@ const findConflicts = (newMeetings, existingCourses, skipId = null) => {
   return conflicts;
 };
 
-/** Gắn thông tin tiết vào từng buổi để frontend hiển thị được cả hai kiểu */
+/**
+ * Rà toàn bộ thời khoá biểu, trả về các cặp buổi học đè lên nhau.
+ *
+ * Trước đây trùng lịch chỉ được báo đúng lúc thêm môn, rồi biến mất.
+ * Sinh viên thêm môn A, bỏ qua cảnh báo, tuần sau mở app lại thì không
+ * còn dấu vết gì — đến lúc bỏ lỡ buổi học mới biết. Nay cảnh báo nằm
+ * lại trên màn thời khoá biểu cho tới khi được xử lý.
+ */
+const detectAllConflicts = (courses, periods) => {
+  const slots = [];
+
+  courses.forEach((c) => {
+    (c.meetings || []).forEach((m) => {
+      slots.push({
+        courseId: String(c._id),
+        name: c.courseName,
+        dayOfWeek: m.dayOfWeek,
+        start: toMinutes(m.startTime),
+        end: toMinutes(m.endTime),
+        startTime: m.startTime,
+        endTime: m.endTime,
+      });
+    });
+  });
+
+  const out = [];
+  const seen = new Set();
+
+  for (let i = 0; i < slots.length; i += 1) {
+    for (let j = i + 1; j < slots.length; j += 1) {
+      const a = slots[i];
+      const b = slots[j];
+      if (a.dayOfWeek !== b.dayOfWeek) continue;
+      if (a.courseId === b.courseId) continue;
+      if (a.start >= b.end || b.start >= a.end) continue;
+
+      // Một cặp môn trùng nhiều buổi chỉ báo một lần cho mỗi ngày
+      const key = [a.courseId, b.courseId].sort().join('|') + a.dayOfWeek;
+      if (seen.has(key)) continue;
+      seen.add(key);
+
+      const overlapStart = Math.max(a.start, b.start);
+      const overlapEnd = Math.min(a.end, b.end);
+      const fmt = (mins) =>
+        `${String(Math.floor(mins / 60)).padStart(2, '0')}:${String(mins % 60).padStart(2, '0')}`;
+
+      out.push({
+        type: 'overlap',
+        dayOfWeek: a.dayOfWeek,
+        courses: [
+          { id: a.courseId, name: a.name },
+          { id: b.courseId, name: b.name },
+        ],
+        courseIds: [a.courseId, b.courseId],
+        startTime: fmt(overlapStart),
+        endTime: fmt(overlapEnd),
+        periods: timeToPeriods(periods, fmt(overlapStart), fmt(overlapEnd)),
+      });
+    }
+  }
+
+  return out;
+};
+
+/**
+ * Tìm những buổi liền nhau ở hai cơ sở khác nhau mà không đủ thời gian đi.
+ *
+ * Đây là lỗi lịch mà không hệ thống nào của trường báo, vì cổng đăng ký
+ * học phần chỉ kiểm tra trùng giờ chứ không biết hai phòng cách nhau bao xa.
+ * Sinh viên chỉ phát hiện ra khi đã đứng ở cổng sai.
+ *
+ * Không tính khoảng cách thật — chỉ so khoảng nghỉ với một ngưỡng chung
+ * của trường. Đủ để cảnh báo, và không giả vờ chính xác hơn thực tế.
+ */
+const detectCommuteIssues = (courses, university) => {
+  if (!university?.campuses?.length) return [];
+
+  /**
+   * university có thể là plain object khi đã qua .lean(), lúc đó không
+   * còn method travelBetween. Dựng lại logic tra bảng ở đây cho chắc.
+   */
+  const travel = (a, b) => {
+    if (!a || !b) return 0;
+    const from = String(a).toUpperCase();
+    const to = String(b).toUpperCase();
+    if (from === to) return 0;
+
+    const hit = (university.campusTravel || []).find(
+      (p) =>
+        (String(p.from).toUpperCase() === from && String(p.to).toUpperCase() === to) ||
+        (String(p.from).toUpperCase() === to && String(p.to).toUpperCase() === from)
+    );
+    return hit ? hit.minutes : university.campusTravelMinutes || 0;
+  };
+
+  const byDay = {};
+  courses.forEach((c) => {
+    (c.meetings || []).forEach((m) => {
+      if (!m.campus) return; // không khai cơ sở thì không đoán bừa
+      (byDay[m.dayOfWeek] ||= []).push({
+        courseId: String(c._id),
+        name: c.courseName,
+        campus: m.campus,
+        start: toMinutes(m.startTime),
+        end: toMinutes(m.endTime),
+        startTime: m.startTime,
+        endTime: m.endTime,
+      });
+    });
+  });
+
+  const out = [];
+  Object.entries(byDay).forEach(([day, list]) => {
+    const sorted = list.sort((a, b) => a.start - b.start);
+    for (let i = 0; i < sorted.length - 1; i += 1) {
+      const a = sorted[i];
+      const b = sorted[i + 1];
+      if (a.campus === b.campus) continue;
+
+      const need = travel(a.campus, b.campus);
+      if (!need) continue;
+
+      const gap = b.start - a.end;
+      if (gap >= need) continue;
+
+      out.push({
+        type: 'commute',
+        dayOfWeek: Number(day),
+        courses: [
+          { id: a.courseId, name: a.name },
+          { id: b.courseId, name: b.name },
+        ],
+        courseIds: [a.courseId, b.courseId],
+        from: a.campus,
+        to: b.campus,
+        gapMinutes: Math.max(0, gap),
+        needMinutes: need,
+        endTime: a.endTime,
+        startTime: b.startTime,
+      });
+    }
+  });
+
+  return out;
+};
+
 const decorate = (course, periods) => {
   const c = course.toObject ? course.toObject() : course;
   c.meetings = (c.meetings || []).map((m) => ({
     ...m,
-    periods: timeToPeriods(periods, m.startTime, m.endTime), // null nếu không khớp khung
+    periods: timeToPeriods(periods, m.startTime, m.endTime),
   }));
   return c;
 };
 
 // ===== HANDLERS =====
 
-/**
- * GET /api/schedule
- * Trả về toàn bộ môn học kèm khung tiết đang áp dụng.
- */
 export const getSchedule = async (req, res) => {
   const periods = resolvePeriods(req.user);
   const filter = { student: req.user._id, isArchived: false };
@@ -186,14 +325,15 @@ export const getSchedule = async (req, res) => {
       courses: courses.map((c) => decorate(c, periods)),
       periods,
       timeDisplay: req.user.preferences?.timeDisplay || 'period',
+      conflicts: [
+        ...detectAllConflicts(courses, periods),
+        ...detectCommuteIssues(courses, req.user.university),
+      ],
+      campuses: req.user.university?.campuses || [],
     },
   });
 };
 
-/**
- * GET /api/schedule/today
- * Buổi học hôm nay, sắp theo giờ. Dùng cho màn hình chính.
- */
 export const getToday = async (req, res) => {
   const periods = resolvePeriods(req.user);
   const today = jsDayToVn(new Date().getDay());
@@ -231,9 +371,6 @@ export const getToday = async (req, res) => {
   });
 };
 
-/**
- * POST /api/schedule
- */
 export const createCourse = async (req, res) => {
   const { error, value } = courseInput.validate(req.body, { abortEarly: false });
   if (error) {
@@ -266,10 +403,11 @@ export const createCourse = async (req, res) => {
 
   const conflicts = findConflicts(meetings, existing);
 
-  // Màu tự động, cố gắng không trùng với các môn đã có
   const used = new Set(existing.map((c) => c.color).filter(Boolean));
   const color =
-    value.color || COURSE_COLORS.find((c) => !used.has(c)) || COURSE_COLORS[existing.length % COURSE_COLORS.length];
+    value.color ||
+    COURSE_COLORS.find((c) => !used.has(c)) ||
+    COURSE_COLORS[existing.length % COURSE_COLORS.length];
 
   const course = await Schedule.create({
     ...value,
@@ -279,21 +417,15 @@ export const createCourse = async (req, res) => {
   });
 
   logger.info(`Thêm môn vào TKB: ${course._id}`);
+  contributeToCatalog(req.user, { ...value, meetings });
 
   res.status(201).json({
     status: 'success',
     message: 'Đã thêm môn học',
-    data: {
-      course: decorate(course, periods),
-      // Trùng lịch chỉ cảnh báo — sinh viên có thể cố ý đăng ký lịch chồng
-      conflicts,
-    },
+    data: { course: decorate(course, periods), conflicts },
   });
 };
 
-/**
- * PUT /api/schedule/:id
- */
 export const updateCourse = async (req, res) => {
   if (!mongoose.isValidObjectId(req.params.id)) return badId(res);
 
@@ -345,9 +477,6 @@ export const updateCourse = async (req, res) => {
   });
 };
 
-/**
- * DELETE /api/schedule/:id
- */
 export const deleteCourse = async (req, res) => {
   if (!mongoose.isValidObjectId(req.params.id)) return badId(res);
 
@@ -369,15 +498,15 @@ export const deleteCourse = async (req, res) => {
 
 // ===== KHUNG TIẾT =====
 
-/**
- * GET /api/schedule/periods
- */
 export const getPeriods = async (req, res) => {
   res.status(200).json({
     status: 'success',
     data: {
       periods: resolvePeriods(req.user),
       isCustom: Boolean(req.user.periodSchedule?.length),
+      fromUniversity: Boolean(
+        !req.user.periodSchedule?.length && req.user.university?.periodSchedule?.length
+      ),
       defaults: DEFAULT_PERIODS,
     },
   });
@@ -385,10 +514,14 @@ export const getPeriods = async (req, res) => {
 
 /**
  * PUT /api/schedule/periods
- * Lưu khung tiết riêng của người dùng.
  *
- * LƯU Ý: các môn đã nhập KHÔNG bị ảnh hưởng, vì database lưu giờ
- * chứ không lưu tiết. Đổi khung chỉ đổi cách hiển thị.
+ * Database lưu GIỜ, không lưu tiết — nên đổi khung không làm mất dữ liệu.
+ * Nhưng môn nhập theo tiết cũ sẽ không còn khớp tiết nào trong khung mới,
+ * và sẽ hiện ra dưới dạng giờ thay vì "Tiết 1–3".
+ *
+ * remapCourses = true thì tính lại: với mỗi buổi học, tra xem nó thuộc
+ * tiết nào trong khung CŨ, rồi gán giờ tương ứng của tiết đó trong khung MỚI.
+ * Buổi nào không khớp tiết nào (lịch bù, học ngoài giờ) thì giữ nguyên.
  */
 export const setPeriods = async (req, res) => {
   const { error, value } = periodsInput.validate(req.body);
@@ -412,18 +545,49 @@ export const setPeriods = async (req, res) => {
     }
   }
 
+  const oldPeriods = resolvePeriods(req.user);
+  let remapped = 0;
+
+  if (value.remapCourses) {
+    const courses = await Schedule.find({ student: req.user._id, isArchived: false });
+
+    for (const course of courses) {
+      let changed = false;
+
+      course.meetings.forEach((m) => {
+        const oldRange = timeToPeriods(oldPeriods, m.startTime, m.endTime);
+        if (!oldRange) return; // không khớp tiết nào — giữ nguyên
+
+        const next = periodsToTime(sorted, oldRange.fromPeriod, oldRange.toPeriod);
+        if (!next) return; // khung mới không có tiết đó — giữ nguyên
+
+        if (next.startTime !== m.startTime || next.endTime !== m.endTime) {
+          m.startTime = next.startTime;
+          m.endTime = next.endTime;
+          changed = true;
+        }
+      });
+
+      if (changed) {
+        await course.save();
+        remapped += 1;
+      }
+    }
+  }
+
   await User.updateOne({ _id: req.user._id }, { $set: { periodSchedule: sorted } });
+
+  logger.info(`Đổi khung tiết cho ${req.user._id}, cập nhật ${remapped} môn`);
 
   res.status(200).json({
     status: 'success',
-    message: 'Đã lưu khung tiết',
-    data: { periods: sorted },
+    message: remapped
+      ? `Đã lưu khung tiết và cập nhật ${remapped} môn học`
+      : 'Đã lưu khung tiết',
+    data: { periods: sorted, remappedCourses: remapped },
   });
 };
 
-/**
- * DELETE /api/schedule/periods — quay về khung mặc định hoặc khung của trường
- */
 export const resetPeriods = async (req, res) => {
   await User.updateOne({ _id: req.user._id }, { $set: { periodSchedule: [] } });
   const fresh = await User.findById(req.user._id).populate('university', 'periodSchedule');
@@ -434,9 +598,6 @@ export const resetPeriods = async (req, res) => {
   });
 };
 
-/**
- * PUT /api/schedule/display — đổi kiểu hiển thị: theo tiết hay theo giờ
- */
 export const setTimeDisplay = async (req, res) => {
   const mode = req.body.timeDisplay;
   if (!['period', 'clock'].includes(mode)) {
@@ -447,10 +608,317 @@ export const setTimeDisplay = async (req, res) => {
     });
   }
 
-  await User.updateOne(
-    { _id: req.user._id },
-    { $set: { 'preferences.timeDisplay': mode } }
-  );
+  await User.updateOne({ _id: req.user._id }, { $set: { 'preferences.timeDisplay': mode } });
 
   res.status(200).json({ status: 'success', data: { timeDisplay: mode } });
+};
+
+// ===== NHẬP TỪ CỔNG TRƯỜNG =====
+
+/**
+ * Bộ tách theo từng trường. Mỗi trường một hàm, chọn theo slug.
+ * Thêm trường thứ hai chỉ là thêm một dòng ở đây.
+ */
+const PARSERS = { ueh: parseUEH };
+
+/**
+ * GET /api/schedule/import/support
+ * Frontend hỏi trước: trường này có nhập nhanh được không?
+ */
+export const getImportSupport = async (req, res) => {
+  const slug = req.user.university?.slug || null;
+  const supported = Boolean(slug && PARSERS[slug]);
+
+  res.status(200).json({
+    status: 'success',
+    data: {
+      supported,
+      slug,
+      shortName: req.user.university?.shortName || null,
+      source: supported ? 'https://daotao.ueh.edu.vn/khdt/' : null,
+    },
+  });
+};
+
+/**
+ * POST /api/schedule/import/preview
+ *
+ * Chỉ tách và trả về, KHÔNG lưu. Sinh viên xem lại rồi mới xác nhận.
+ * Bộ tách phụ thuộc vào cách trang trường trình bày dữ liệu, mà cách đó
+ * có thể đổi bất cứ lúc nào — nên không bao giờ ghi thẳng vào thời khoá
+ * biểu của người dùng mà không cho họ nhìn trước.
+ */
+export const previewImport = async (req, res) => {
+  const slug = req.user.university?.slug;
+  const parser = slug && PARSERS[slug];
+
+  if (!parser) {
+    return res.status(400).json({
+      status: 'error',
+      code: 'IMPORT_NOT_SUPPORTED',
+      message: 'Chưa hỗ trợ nhập nhanh cho trường của bạn',
+    });
+  }
+
+  const text = String(req.body.text || '');
+  if (text.length > 200000) {
+    return res.status(400).json({
+      status: 'error',
+      code: 'TEXT_TOO_LONG',
+      message: 'Nội dung dán quá dài. Dán từng trang một.',
+    });
+  }
+
+  const { courses, warnings } = parser(text);
+  const periods = resolvePeriods(req.user);
+
+  /** Gắn thêm số tiết để sinh viên đối chiếu với lịch trên cổng trường */
+  const enriched = courses.map((c) => ({
+    ...c,
+    meetings: c.meetings.map((m) => ({
+      ...m,
+      periods: timeToPeriods(periods, m.startTime, m.endTime),
+    })),
+  }));
+
+  // Cảnh báo trùng lịch ngay ở bước xem trước, không đợi lưu xong mới báo
+  const flat = enriched.flatMap((c, ci) =>
+    c.meetings.map((m) => ({ ...m, ci, name: c.courseName }))
+  );
+  const clashes = [];
+  for (let i = 0; i < flat.length; i += 1) {
+    for (let j = i + 1; j < flat.length; j += 1) {
+      const a = flat[i];
+      const b = flat[j];
+      if (a.ci === b.ci || a.dayOfWeek !== b.dayOfWeek) continue;
+      if (
+        toMinutes(a.startTime) < toMinutes(b.endTime) &&
+        toMinutes(b.startTime) < toMinutes(a.endTime)
+      ) {
+        clashes.push({ dayOfWeek: a.dayOfWeek, names: [a.name, b.name] });
+      }
+    }
+  }
+
+  res.status(200).json({
+    status: 'success',
+    data: { courses: enriched, warnings, clashes, periods },
+  });
+};
+
+/**
+ * POST /api/schedule/import
+ * Nhận danh sách môn sinh viên đã xem và chỉnh, rồi lưu.
+ */
+export const commitImport = async (req, res) => {
+  const incoming = Array.isArray(req.body.courses) ? req.body.courses : [];
+  if (!incoming.length) {
+    return res.status(400).json({
+      status: 'error',
+      code: 'NOTHING_TO_IMPORT',
+      message: 'Không có môn nào để thêm',
+    });
+  }
+  if (incoming.length > 20) {
+    return res.status(400).json({
+      status: 'error',
+      code: 'TOO_MANY',
+      message: 'Tối đa 20 môn mỗi lần nhập',
+    });
+  }
+
+  const periods = resolvePeriods(req.user);
+  const existing = await Schedule.find({ student: req.user._id, isArchived: false });
+
+  const used = new Set(existing.map((c) => c.color).filter(Boolean));
+  let created = 0;
+  let skipped = 0;
+  const errors = [];
+
+  for (const item of incoming) {
+    const { error, value } = courseInput.validate(
+      {
+        courseName: item.courseName,
+        courseCode: item.courseCode || '',
+        instructor: item.instructor || '',
+        meetings: (item.meetings || []).map((m) => ({
+          dayOfWeek: m.dayOfWeek,
+          startTime: m.startTime,
+          endTime: m.endTime,
+          room: m.room || '',
+          building: m.building || '',
+          note: m.note || '',
+        })),
+      },
+      { abortEarly: true }
+    );
+
+    if (error) {
+      errors.push(`${item.courseName || 'Môn không tên'}: ${error.details[0].message}`);
+      continue;
+    }
+
+    /**
+     * Bỏ qua môn đã có. Sinh viên dán lại lần hai — vì thêm sót một môn,
+     * hoặc vì trường đổi lịch — không nên tạo ra bản trùng.
+     */
+    const dup = existing.find(
+      (c) =>
+        (value.courseCode && c.courseCode === value.courseCode) ||
+        c.courseName.toLowerCase() === value.courseName.toLowerCase()
+    );
+    if (dup) {
+      skipped += 1;
+      continue;
+    }
+
+    let meetings;
+    try {
+      meetings = normalizeMeetings(value.meetings, periods);
+    } catch (e) {
+      errors.push(`${value.courseName}: ${e.message}`);
+      continue;
+    }
+
+    const color =
+      COURSE_COLORS.find((c) => !used.has(c)) ||
+      COURSE_COLORS[(existing.length + created) % COURSE_COLORS.length];
+    used.add(color);
+
+    await Schedule.create({
+      ...value,
+      meetings,
+      color,
+      student: req.user._id,
+    });
+    contributeToCatalog(req.user, { ...value, meetings });
+    created += 1;
+  }
+
+  logger.info(`Nhập TKB: ${created} môn mới, ${skipped} bỏ qua, ${errors.length} lỗi`);
+
+  res.status(201).json({
+    status: 'success',
+    message: skipped
+      ? `Đã thêm ${created} môn, bỏ qua ${skipped} môn đã có`
+      : `Đã thêm ${created} môn`,
+    data: { created, skipped, errors },
+  });
+};
+
+// ===== DANH MỤC LỚP HỌC PHẦN =====
+
+/**
+ * Ghi lớp học vào danh mục chung.
+ *
+ * Gọi mỗi khi sinh viên thêm môn — dù nhập tay hay dán từ cổng trường.
+ * Không lưu ai đóng góp: danh mục chỉ chứa dữ liệu của nhà trường, không
+ * chứa thông tin về người dùng.
+ *
+ * Bỏ qua lớp không có mã. Tên môn tự gõ thì mỗi người viết một kiểu
+ * ("Kinh tế vi mô", "KTVM", "kinh te vi mo"), gom vào danh mục chỉ tạo
+ * ra nhiễu. Mã lớp thì chép từ cổng trường nên đáng tin.
+ */
+const contributeToCatalog = async (user, course) => {
+  const uniId = user.university?._id || user.university;
+  const code = String(course.courseCode || '').trim().toUpperCase();
+
+  if (!uniId || !code || code.length < 4) return;
+  if (!course.meetings?.length) return;
+
+  try {
+    await CourseOffering.updateOne(
+      { university: uniId, classCode: code },
+      {
+        $set: {
+          courseName: course.courseName,
+          instructor: course.instructor || '',
+          term: course.term || '',
+          academicYear: course.academicYear || '',
+          meetings: course.meetings.map((m) => ({
+            dayOfWeek: m.dayOfWeek,
+            startTime: m.startTime,
+            endTime: m.endTime,
+            campus: m.campus || '',
+            building: m.building || '',
+            room: m.room || '',
+          })),
+          lastSeenAt: new Date(),
+        },
+        $inc: { seenCount: 1 },
+        $setOnInsert: { university: uniId, classCode: code },
+      },
+      { upsert: true }
+    );
+  } catch (e) {
+    // Danh mục là tiện ích phụ — hỏng thì không được kéo theo việc lưu môn
+    logger.warn(`Không ghi được vào danh mục: ${e.message}`);
+  }
+};
+
+/**
+ * GET /api/schedule/courses/search?q=
+ *
+ * Gợi ý lớp học phần cho ô nhập. Tìm được cả bằng mã lớp lẫn tên môn —
+ * sinh viên nhớ cái nào thì gõ cái đó.
+ */
+export const searchCourses = async (req, res) => {
+  const uniId = req.user.university?._id || req.user.university;
+  const q = String(req.query.q || '').trim();
+
+  if (!uniId) {
+    return res.status(200).json({ status: 'success', data: { courses: [], reason: 'NO_UNIVERSITY' } });
+  }
+  if (q.length < 2) {
+    return res.status(200).json({ status: 'success', data: { courses: [] } });
+  }
+
+  const filter = { university: uniId };
+  const upper = q.toUpperCase();
+
+  /**
+   * Gõ mã thì khớp theo tiền tố — sinh viên gõ "26D1TEC" là ra hết các
+   * lớp của môn đó. Gõ tên thì dùng tìm kiếm toàn văn.
+   *
+   * escape ký tự đặc biệt: mã lớp không có, nhưng tên môn thì có dấu
+   * chấm ("A.I. trong kinh doanh") và dấu ngoặc.
+   */
+  const safe = q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const isCodeLike = /^[A-Z0-9]{2,}$/i.test(q);
+
+  const query = isCodeLike
+    ? { ...filter, classCode: new RegExp(`^${safe.toUpperCase()}`) }
+    : { ...filter, $or: [
+        { courseName: new RegExp(safe, 'i') },
+        { classCode: new RegExp(`^${safe.toUpperCase()}`) },
+      ] };
+
+  const list = await CourseOffering.find(query)
+    .sort({ seenCount: -1, lastSeenAt: -1 })
+    .limit(15)
+    .lean();
+
+  const periods = resolvePeriods(req.user);
+  const campuses = req.user.university?.campuses || [];
+  const campusName = (code) => campuses.find((c) => c.code === code)?.name || code || '';
+
+  res.status(200).json({
+    status: 'success',
+    data: {
+      courses: list.map((o) => ({
+        id: String(o._id),
+        classCode: o.classCode,
+        courseName: o.courseName,
+        instructor: o.instructor,
+        seenCount: o.seenCount,
+        /** Đủ tin cậy khi ít nhất ba người có cùng lớp này trong lịch */
+        trusted: o.seenCount >= 3,
+        meetings: (o.meetings || []).map((m) => ({
+          ...m,
+          campusName: campusName(m.campus),
+          periods: timeToPeriods(periods, m.startTime, m.endTime),
+        })),
+      })),
+    },
+  });
 };

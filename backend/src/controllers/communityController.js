@@ -2,13 +2,59 @@ import Joi from 'joi';
 import mongoose from 'mongoose';
 import Post from '../models/Post.js';
 import Comment from '../models/Comment.js';
-import { serializePost, serializePosts, serializeComments } from '../utils/serializers.js';
+import Topic from '../models/Topic.js';
+import Bookmark from '../models/Bookmark.js';
+import {
+  serializePost,
+  serializePosts,
+  serializeComments,
+  serializeTopic,
+} from '../utils/serializers.js';
+import TrendingCache from '../models/TrendingCache.js';
 import { logger } from '../utils/logger.js';
 
 const MAX_LIMIT = 30;
 
-/** Người chưa xác thực chỉ được đăng giới hạn ở bảng tin toàn quốc */
-const GUEST_POSTS_PER_HOUR = 3;
+/**
+ * Hạn mức đăng bài cho tài khoản chưa xác thực.
+ *
+ * Tính theo NGÀY LỊCH giờ Việt Nam, không theo cửa sổ trượt 24 giờ.
+ * Cửa sổ trượt gây khó hiểu: đăng lúc 23h hôm qua thì 8h sáng nay vẫn
+ * hết lượt, người dùng không đoán được bao giờ mới đăng lại được.
+ * Reset lúc nửa đêm thì ai cũng hiểu ngay.
+ */
+const GUEST_POSTS_PER_DAY = 3;
+
+/** Mốc nửa đêm gần nhất theo giờ Việt Nam (UTC+7), trả về dạng UTC */
+const startOfDayVN = () => {
+  const shifted = new Date(Date.now() + 7 * 3600000);
+  shifted.setUTCHours(0, 0, 0, 0);
+  return new Date(shifted.getTime() - 7 * 3600000);
+};
+
+/** Nửa đêm kế tiếp — để báo cho người dùng biết khi nào có lượt lại */
+const nextResetVN = () => new Date(startOfDayVN().getTime() + 24 * 3600000);
+
+/** Số bài đã đăng trong ngày và số lượt còn lại */
+const getQuota = async (user) => {
+  if (user.verificationStatus === 'verified') {
+    return { limited: false, limit: null, used: 0, remaining: null, resetsAt: null };
+  }
+
+  const used = await Post.countDocuments({
+    author: user._id,
+    isDeleted: false,
+    createdAt: { $gte: startOfDayVN() },
+  });
+
+  return {
+    limited: true,
+    limit: GUEST_POSTS_PER_DAY,
+    used,
+    remaining: Math.max(0, GUEST_POSTS_PER_DAY - used),
+    resetsAt: nextResetVN(),
+  };
+};
 
 const createPostSchema = Joi.object({
   title: Joi.string().trim().min(2).max(200).required().messages({
@@ -23,6 +69,7 @@ const createPostSchema = Joi.object({
     .default('General'),
   isAnonymous: Joi.boolean().default(true),
   communityType: Joi.string().valid('global', 'university').default('university'),
+  topic: Joi.string().hex().length(24).allow(null, '').default(null),
   images: Joi.array().items(Joi.string().uri()).max(5).default([]),
 });
 
@@ -81,9 +128,10 @@ const postAccessError = (post, user) => {
  */
 export const getFeed = async (req, res) => {
   const scope = req.query.scope === 'global' ? 'global' : 'university';
+  const sort = req.query.sort === 'hot' ? 'hot' : 'new';
   const page = Math.max(1, parseInt(req.query.page, 10) || 1);
   const limit = Math.min(MAX_LIMIT, parseInt(req.query.limit, 10) || 20);
-  const { category } = req.query;
+  const { category, topic } = req.query;
 
   const filter = { isDeleted: false, isApproved: true };
 
@@ -103,22 +151,84 @@ export const getFeed = async (req, res) => {
   }
 
   if (category) filter.category = category;
+  if (topic && mongoose.isValidObjectId(topic)) {
+    filter.topic = new mongoose.Types.ObjectId(topic);
+  }
 
-  const [posts, total] = await Promise.all([
-    Post.find(filter)
-      .sort({ isPinned: -1, createdAt: -1 })
-      .skip((page - 1) * limit)
-      .limit(limit)
-      .populate('university', 'shortName name')
-      .lean(),
-    Post.countDocuments(filter),
-  ]);
+  let posts;
+  let total;
+
+  if (sort === 'hot') {
+    /**
+     * Điểm nóng theo kiểu Hacker News: tương tác chia cho tuổi bài.
+     *
+     * Bình luận nặng hơn lượt thích (5 so với 3) vì bình luận tốn công
+     * hơn nhiều — một bài có 3 bình luận thật sự sống động hơn bài có
+     * 20 lượt thích. Lượt xem tính rất nhẹ, chỉ để phá thế hoà.
+     *
+     * Mẫu số (giờ + 2)^1.5 khiến bài cũ tụt dần, nên bảng tin không bị
+     * một bài viral chiếm chỗ mãi mãi.
+     */
+    const pipeline = [
+      { $match: filter },
+      {
+        $addFields: {
+          _ageHours: {
+            $divide: [{ $subtract: [new Date(), '$createdAt'] }, 3600000],
+          },
+        },
+      },
+      {
+        $addFields: {
+          _hot: {
+            $divide: [
+              {
+                $add: [
+                  { $multiply: [{ $ifNull: ['$likeCount', 0] }, 3] },
+                  { $multiply: [{ $ifNull: ['$commentCount', 0] }, 5] },
+                  { $multiply: [{ $ifNull: ['$views', 0] }, 0.15] },
+                  1,
+                ],
+              },
+              { $pow: [{ $add: ['$_ageHours', 2] }, 1.5] },
+            ],
+          },
+        },
+      },
+      { $sort: { isPinned: -1, _hot: -1, createdAt: -1 } },
+      { $skip: (page - 1) * limit },
+      { $limit: limit },
+    ];
+
+    [posts, total] = await Promise.all([
+      Post.aggregate(pipeline),
+      Post.countDocuments(filter),
+    ]);
+
+    await Post.populate(posts, [
+      { path: 'university', select: 'shortName name' },
+      { path: 'topic', select: 'title emoji color' },
+    ]);
+  } else {
+    [posts, total] = await Promise.all([
+      Post.find(filter)
+        .sort({ isPinned: -1, createdAt: -1 })
+        .skip((page - 1) * limit)
+        .limit(limit)
+        .populate('university', 'shortName name')
+        .populate('topic', 'title emoji color')
+        .lean(),
+      Post.countDocuments(filter),
+    ]);
+  }
 
   // Chỉ nạp tác giả cho bài công khai — bài ẩn danh không đi qua nhánh này
-  const publicPosts = posts.filter((p) => !p.isAnonymous);
+  const publicPosts = posts.filter((p) => !p.isAnonymous && !p.isOfficial);
   if (publicPosts.length) {
     const User = mongoose.model('User');
-    const authors = await User.find({ _id: { $in: publicPosts.map((p) => p.author).filter(Boolean) } })
+    const authors = await User.find({
+      _id: { $in: publicPosts.map((p) => p.author).filter(Boolean) },
+    })
       .select('nickname profilePhoto')
       .lean();
     const byId = new Map(authors.map((a) => [String(a._id), a]));
@@ -127,20 +237,24 @@ export const getFeed = async (req, res) => {
     });
   }
 
-  const likedIds = await Post.find({
-    _id: { $in: posts.map((p) => p._id) },
-    likes: req.user._id,
-  })
-    .select('_id')
-    .lean();
+  const ids = posts.map((p) => p._id);
+
+  const [likedIds, savedIds] = await Promise.all([
+    Post.find({ _id: { $in: ids }, likes: req.user._id }).select('_id').lean(),
+    Bookmark.find({ user: req.user._id, post: { $in: ids } }).select('post').lean(),
+  ]);
+
   const likedPostIds = new Set(likedIds.map((p) => String(p._id)));
+  const savedPostIds = new Set(savedIds.map((b) => String(b.post)));
 
   res.status(200).json({
     status: 'success',
     data: {
       scope,
+      sort,
       posts: serializePosts(posts, req.user._id, {
         likedPostIds,
+        savedPostIds,
         isModerator: isModerator(req.user),
       }),
       pagination: {
@@ -151,6 +265,26 @@ export const getFeed = async (req, res) => {
         hasMore: page * limit < total,
       },
     },
+  });
+};
+
+/**
+ * GET /api/community/topics
+ * Chủ đề đang trong mùa. Hết hạn thì tự biến mất, không phải tắt tay.
+ */
+export const getTopics = async (req, res) => {
+  const scope = req.query.scope === 'university' ? 'university' : 'global';
+
+  if (scope === 'university' && req.user.verificationStatus !== 'verified') {
+    return res.status(200).json({ status: 'success', data: { topics: [] } });
+  }
+
+  const uniId = req.user.university?._id || req.user.university || null;
+  const topics = await Topic.findActive(scope, uniId);
+
+  res.status(200).json({
+    status: 'success',
+    data: { topics: topics.map(serializeTopic) },
   });
 };
 
@@ -183,37 +317,54 @@ export const createPost = async (req, res) => {
   } else if (!verified) {
     // Tài khoản chưa xác thực không có gì ràng buộc danh tính,
     // nên siết chặt hơn để tránh spam ở bảng tin mở
-    const anHourAgo = new Date(Date.now() - 60 * 60 * 1000);
-    const recent = await Post.countDocuments({
-      author: req.user._id,
-      createdAt: { $gte: anHourAgo },
-    });
+    const quota = await getQuota(req.user);
 
-    if (recent >= GUEST_POSTS_PER_HOUR) {
+    if (quota.remaining <= 0) {
       return res.status(429).json({
         status: 'error',
         code: 'GUEST_POST_LIMIT',
-        message: `Tài khoản chưa xác thực chỉ đăng được ${GUEST_POSTS_PER_HOUR} bài mỗi giờ. Xác thực email trường để bỏ giới hạn này.`,
+        message: `Hôm nay bạn đã đăng đủ ${GUEST_POSTS_PER_DAY} bài. Xác thực email trường để bỏ giới hạn.`,
+        quota,
       });
     }
   }
 
   const post = await Post.create({
     ...value,
+    topic: value.topic || null,
     author: req.user._id,
     university: value.communityType === 'university' ? universityId : null,
     lastActivityAt: new Date(),
   });
 
+  if (value.topic) {
+    await Topic.updateOne({ _id: value.topic }, { $inc: { postCount: 1 } });
+  }
+
   logger.info(`Bài mới: ${post._id} (${value.communityType}, ẩn danh: ${post.isAnonymous})`);
 
-  const populated = await Post.findById(post._id).populate('university', 'shortName name');
+  const populated = await Post.findById(post._id)
+    .populate('university', 'shortName name')
+    .populate('topic', 'title emoji color');
 
   res.status(201).json({
     status: 'success',
     message: 'Đăng bài thành công',
-    data: { post: serializePost(populated, req.user._id) },
+    data: {
+      post: serializePost(populated, req.user._id),
+      quota: await getQuota(req.user),
+    },
   });
+};
+
+/**
+ * GET /api/community/quota
+ *
+ * Frontend gọi TRƯỚC khi mở màn soạn bài, để báo hết lượt ngay từ đầu
+ * thay vì để người dùng gõ xong cả bài rồi mới chặn ở nút Đăng.
+ */
+export const getPostQuota = async (req, res) => {
+  res.status(200).json({ status: 'success', data: await getQuota(req.user) });
 };
 
 /**
@@ -222,10 +373,10 @@ export const createPost = async (req, res) => {
 export const getPost = async (req, res) => {
   if (!mongoose.isValidObjectId(req.params.id)) return badId(res);
 
-  const post = await Post.findOne({ _id: req.params.id, isDeleted: false }).populate(
-    'university',
-    'shortName name'
-  );
+  const post = await Post.findOne({ _id: req.params.id, isDeleted: false })
+    .select('+author')
+    .populate('university', 'shortName name')
+    .populate('topic', 'title emoji color');
 
   if (!post) {
     return res.status(404).json({
@@ -240,19 +391,40 @@ export const getPost = async (req, res) => {
     return res.status(denied.status).json({ status: 'error', ...denied });
   }
 
-  await Post.updateOne({ _id: post._id }, { $inc: { views: 1 } });
+  /**
+   * LỖI CŨ: tăng views SAU khi đã lấy document ra, nên phản hồi trả về
+   * số cũ — người dùng thấy lượt xem luôn chậm một nhịp.
+   *
+   * Nay tăng và lấy lại giá trị mới trong cùng một thao tác.
+   * Không đếm lượt xem của chính tác giả — bài của mình mở bao nhiêu lần
+   * cũng không nên tự thổi số lên.
+   */
+  const isAuthor = String(post.author) === String(req.user._id);
+
+  if (!isAuthor) {
+    const bumped = await Post.findByIdAndUpdate(
+      post._id,
+      { $inc: { views: 1 } },
+      { new: true, select: 'views' }
+    );
+    if (bumped) post.views = bumped.views;
+  }
 
   if (!post.isAnonymous) {
     await post.populate({ path: 'author', select: 'nickname profilePhoto' });
   }
 
-  const liked = await Post.exists({ _id: post._id, likes: req.user._id });
+  const [liked, saved] = await Promise.all([
+    Post.exists({ _id: post._id, likes: req.user._id }),
+    Bookmark.exists({ user: req.user._id, post: post._id }),
+  ]);
 
   res.status(200).json({
     status: 'success',
     data: {
       post: serializePost(post, req.user._id, {
         likedByMe: Boolean(liked),
+        savedByMe: Boolean(saved),
         isModerator: isModerator(req.user),
       }),
     },
@@ -548,5 +720,76 @@ export const toggleCommentLike = async (req, res) => {
   res.status(200).json({
     status: 'success',
     data: { liked: !already, likeCount: Math.max(0, updated.likeCount) },
+  });
+};
+
+/**
+ * GET /api/community/posts/mine
+ *
+ * Bài của chính mình, kèm số liệu và trạng thái trên bảng Đang nổi.
+ *
+ * Màn này tồn tại chủ yếu vì một lý do: người đăng ẩn danh đã gỡ bài
+ * khỏi bảng xếp hạng cần một chỗ để đổi ý. Không có nó thì quyết định
+ * gỡ là một chiều, mà lời hứa "đổi ý lúc nào cũng được" thành lời suông.
+ */
+export const getMyPosts = async (req, res) => {
+  const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+  const limit = 20;
+
+  const [posts, total] = await Promise.all([
+    Post.find({ author: req.user._id, isDeleted: false })
+      .select(
+        '+author title content category isAnonymous isOfficial communityType university ' +
+          'viewCount likeCount commentCount createdAt excludedFromTrending'
+      )
+      .sort({ createdAt: -1 })
+      .skip((page - 1) * limit)
+      .limit(limit)
+      .populate('university', 'shortName')
+      .lean(),
+    Post.countDocuments({ author: req.user._id, isDeleted: false }),
+  ]);
+
+  /**
+   * Hạng hiện tại lấy từ bảng đã tính sẵn, không tính lại.
+   *
+   * Tính lại ở đây sẽ khiến mỗi lần mở màn này chạy toàn bộ thuật toán
+   * xếp hạng — tốn vô ích, vì bảng vốn chỉ làm mới 20 phút một lần.
+   */
+  const caches = await TrendingCache.find({ window: '6h' }).select('scope ranking').lean();
+  const rankOf = (postId) => {
+    for (const c of caches) {
+      const hit = c.ranking?.find((r) => String(r.post) === String(postId));
+      if (hit) return hit.rank;
+    }
+    return null;
+  };
+
+  res.status(200).json({
+    status: 'success',
+    data: {
+      posts: posts.map((p) => ({
+        id: String(p._id),
+        title: p.title,
+        excerpt: (p.content || '').slice(0, 140),
+        category: p.category,
+        scope: p.communityType,
+        university: p.university?.shortName || null,
+        isAnonymous: Boolean(p.isAnonymous),
+        isOfficial: Boolean(p.isOfficial),
+        viewCount: p.viewCount || 0,
+        likeCount: p.likeCount || 0,
+        commentCount: p.commentCount || 0,
+        excludedFromTrending: Boolean(p.excludedFromTrending),
+        trendingRank: p.excludedFromTrending ? null : rankOf(p._id),
+        createdAt: p.createdAt,
+      })),
+      pagination: { page, limit, total, hasMore: page * limit < total },
+      counts: {
+        total,
+        anonymous: posts.filter((p) => p.isAnonymous).length,
+        excluded: posts.filter((p) => p.excludedFromTrending).length,
+      },
+    },
   });
 };

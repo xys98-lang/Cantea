@@ -24,6 +24,8 @@ const meetingSchema = new mongoose.Schema(
       required: true,
       validate: { validator: isValidTime, message: 'Giờ kết thúc không hợp lệ' },
     },
+    /** Mã cơ sở, khớp với University.campuses[].code */
+    campus: { type: String, trim: true, uppercase: true, maxlength: 20, default: '' },
     room: { type: String, trim: true, maxlength: 50, default: '' },
     building: { type: String, trim: true, maxlength: 50, default: '' },
     note: { type: String, trim: true, maxlength: 200, default: '' },

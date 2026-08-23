@@ -61,6 +61,18 @@ client.interceptors.response.use(
         code: data.code || 'SERVER_ERROR',
         message: data.message || 'Có lỗi xảy ra, vui lòng thử lại',
         status: error.response.status,
+        /**
+         * Giữ lại các trường phụ backend gửi kèm: retryAfterSeconds cho
+         * đếm ngược, contacts cho cảnh báo lộ thông tin, quota cho hạn
+         * mức đăng bài. Nếu chỉ lấy code và message thì màn hình mất hết
+         * ngữ cảnh để hiển thị cho đúng.
+         */
+        retryAfterSeconds: data.retryAfterSeconds,
+        attemptsRemaining: data.attemptsRemaining,
+        contacts: data.contacts,
+        detail: data.detail,
+        quota: data.quota,
+        details: data.details,
       });
     }
 

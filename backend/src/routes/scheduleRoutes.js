@@ -9,6 +9,10 @@ import {
   setPeriods,
   resetPeriods,
   setTimeDisplay,
+  getImportSupport,
+  previewImport,
+  commitImport,
+  searchCourses,
 } from '../controllers/scheduleController.js';
 import { protect } from '../middleware/authMiddleware.js';
 
@@ -29,6 +33,14 @@ router.put('/periods', setPeriods);
 router.delete('/periods', resetPeriods);
 
 router.put('/display', setTimeDisplay);
+
+// Gợi ý lớp học phần — đặt trước '/:id' để không bị hiểu là mã môn
+router.get('/courses/search', searchCourses);
+
+// Nhập nhanh từ cổng thông tin trường
+router.get('/import/support', getImportSupport);
+router.post('/import/preview', previewImport);
+router.post('/import', commitImport);
 router.get('/today', getToday);
 
 router.get('/', getSchedule);

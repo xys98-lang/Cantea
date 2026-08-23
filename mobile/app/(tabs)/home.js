@@ -1,22 +1,29 @@
 import { useCallback, useState } from 'react';
-import { Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { useRouter, useFocusEffect } from 'expo-router';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Rule } from '../../src/components/ui';
+import { Screen } from '../../src/components/Screen';
 import { useAuth } from '../../src/store/auth';
 import { fetchToday, meetingLabel, DAYS } from '../../src/api/schedule';
-import { colors, radius, spacing, type } from '../../src/theme';
+import { useTheme, useThemedStyles } from '../../src/store/theme';
 
-const STATUS = {
-  guest: { label: 'CHƯA XÁC THỰC', bg: colors.accent, fg: colors.accentInk },
-  pending: { label: 'ĐANG CHỜ MÃ', bg: colors.warningSoft, fg: colors.warningInk },
-  verified: { label: 'ĐÃ XÁC THỰC', bg: colors.successSoft, fg: colors.successInk },
-};
+/**
+ * Hàm nhận theme chứ không phải object cố định.
+ *
+ * Ở cấp module thì `t` chưa tồn tại — nó chỉ có bên trong component, sau
+ * khi useTheme() chạy. Mọi hằng số có màu đều phải chuyển thành hàm như
+ * thế này, nếu không sẽ nổ ngay lúc nạp file.
+ */
+const statusOf = (t) => ({
+  guest: { label: 'CHƯA XÁC THỰC', bg: t.colors.fill, fg: t.colors.inkBody },
+  pending: { label: 'ĐANG CHỜ MÃ', bg: t.colors.raised, fg: t.colors.inkBody },
+  verified: { label: 'ĐÃ XÁC THỰC', bg: t.colors.fill, fg: t.colors.inkBody },
+});
 
 export default function Home() {
+  const t = useTheme();
+  const s = useThemedStyles(styles);
   const router = useRouter();
   const { user } = useAuth();
-  const insets = useSafeAreaInsets();
 
   const [today, setToday] = useState({ classes: [], dayOfWeek: null });
   const [refreshing, setRefreshing] = useState(false);
@@ -38,38 +45,25 @@ export default function Home() {
     }, [load])
   );
 
+  const STATUS = statusOf(t);
   const status = STATUS[user?.verificationStatus] || STATUS.guest;
   const uni = user?.university;
   const dayLabel = DAYS.find((d) => d.value === today.dayOfWeek)?.label || 'Hôm nay';
 
   return (
-    <ScrollView
-      style={{ flex: 1, backgroundColor: colors.bg }}
-      contentContainerStyle={[
-        s.scroll,
-        { paddingTop: insets.top + spacing.lg, paddingBottom: spacing.xl },
-      ]}
-      refreshControl={
-        <RefreshControl
-          refreshing={refreshing}
-          onRefresh={() => {
-            setRefreshing(true);
-            load();
-          }}
-          tintColor={colors.brand}
-        />
-      }
-    >
-      <View style={s.head}>
-        <View style={{ flex: 1 }}>
-          <Text style={s.wordmark}>cantea</Text>
-          <Rule style={{ marginBottom: 0 }} />
-        </View>
+    <Screen
+      title="cantea"
+      right={
         <View style={[s.badge, { backgroundColor: status.bg }]}>
           <Text style={[s.badgeLabel, { color: status.fg }]}>{status.label}</Text>
         </View>
-      </View>
-
+      }
+      refreshing={refreshing}
+      onRefresh={() => {
+        setRefreshing(true);
+        load();
+      }}
+    >
       <Text style={s.greeting}>Chào {user?.firstName || 'bạn'}</Text>
       {Boolean(uni?.shortName) && <Text style={s.uni}>{uni.shortName}</Text>}
 
@@ -87,7 +81,7 @@ export default function Home() {
             onPress={() => router.push(`/course-edit?id=${c.courseId}`)}
             style={s.classRow}
           >
-            <View style={[s.stripe, { backgroundColor: c.color || colors.brand }]} />
+            <View style={[s.stripe, { backgroundColor: c.color || t.colors.accent }]} />
             <View style={{ flex: 1 }}>
               <Text style={s.className} numberOfLines={1}>
                 {c.courseName}
@@ -119,67 +113,65 @@ export default function Home() {
           <Text style={s.inviteCta}>Xác thực ngay →</Text>
         </Pressable>
       )}
-    </ScrollView>
+    </Screen>
   );
 }
 
-const s = StyleSheet.create({
-  scroll: { paddingHorizontal: spacing.lg },
-  head: { flexDirection: 'row', alignItems: 'flex-start', marginBottom: spacing.lg },
-  wordmark: { ...type.wordmark, color: colors.brandDeep },
+const styles = (t) =>
+  StyleSheet.create({
   badge: {
-    borderRadius: radius.pill,
-    paddingHorizontal: spacing.md,
+    borderRadius: t.radius.pill,
+    paddingHorizontal: t.spacing.md,
     paddingVertical: 6,
-    marginTop: spacing.sm,
+    marginTop: t.spacing.sm,
   },
-  badgeLabel: { ...type.micro },
+  badgeLabel: { ...t.type.micro },
 
-  greeting: { ...type.title, color: colors.ink },
-  uni: { ...type.caption, color: colors.inkMuted, marginTop: 2 },
+  greeting: { ...t.type.title, color: t.colors.ink },
+  uni: { ...t.type.caption, color: t.colors.inkMuted, marginTop: 2 },
 
   sectionHead: {
     flexDirection: 'row',
     alignItems: 'baseline',
     justifyContent: 'space-between',
-    marginTop: spacing.xl,
-    marginBottom: spacing.md,
+    marginTop: t.spacing.xl,
+    marginBottom: t.spacing.md,
   },
-  sectionTitle: { ...type.heading, color: colors.ink },
-  link: { ...type.label, color: colors.brandDeep },
+  sectionTitle: { ...t.type.heading, color: t.colors.ink },
+  link: { ...t.type.label, color: t.colors.accentPressed },
 
   classRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: colors.surface,
+    backgroundColor: t.colors.surface,
     borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: radius.md,
-    padding: spacing.md,
-    marginBottom: spacing.sm,
+    borderColor: t.colors.line,
+    borderRadius: t.radius.md,
+    padding: t.spacing.md,
+    marginBottom: t.spacing.sm,
   },
-  stripe: { width: 4, height: 36, borderRadius: 2, marginRight: spacing.md },
-  className: { ...type.label, fontSize: 15, color: colors.ink },
-  classMeta: { ...type.caption, color: colors.inkMuted, marginTop: 2 },
-  classTime: { ...type.label, color: colors.brandDeep, marginLeft: spacing.sm },
+  stripe: { width: 4, height: 36, borderRadius: 2, marginRight: t.spacing.md },
+  className: { ...t.type.label, fontSize: 15, color: t.colors.ink },
+  classMeta: { ...t.type.caption, color: t.colors.inkMuted, marginTop: 2 },
+  classTime: { ...t.type.label, color: t.colors.accentPressed, marginLeft: t.spacing.sm },
 
   emptyCard: {
-    backgroundColor: colors.surface,
+    backgroundColor: t.colors.surface,
     borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: radius.lg,
-    padding: spacing.md,
+    borderColor: t.colors.line,
+    borderRadius: t.radius.lg,
+    padding: t.spacing.md,
   },
-  emptyTitle: { ...type.label, fontSize: 15, color: colors.ink, marginBottom: spacing.xs },
-  emptyLine: { ...type.caption, color: colors.inkMuted },
+  emptyTitle: { ...t.type.label, fontSize: 15, color: t.colors.ink, marginBottom: t.spacing.xs },
+  emptyLine: { ...t.type.caption, color: t.colors.inkMuted },
 
   inviteCard: {
-    backgroundColor: colors.brandSoft,
-    borderRadius: radius.lg,
-    padding: spacing.md,
-    marginTop: spacing.lg,
+    backgroundColor: t.colors.fill,
+    borderRadius: t.radius.lg,
+    padding: t.spacing.md,
+    marginTop: t.spacing.lg,
   },
-  inviteTitle: { ...type.label, fontSize: 15, color: colors.brandDeep, marginBottom: spacing.xs },
-  inviteLine: { ...type.caption, color: colors.brandDeep },
-  inviteCta: { ...type.label, color: colors.brandDeep, marginTop: spacing.sm },
+  inviteTitle: { ...t.type.label, fontSize: 15, color: t.colors.accentPressed, marginBottom: t.spacing.xs },
+  inviteLine: { ...t.type.caption, color: t.colors.accentPressed },
+  inviteCta: { ...t.type.label, color: t.colors.accentPressed, marginTop: t.spacing.sm },
 });

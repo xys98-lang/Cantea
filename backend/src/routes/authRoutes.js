@@ -6,6 +6,11 @@ import {
   confirmVerification,
   getVerificationStatus,
 } from '../controllers/verificationController.js';
+import {
+  requestReset,
+  verifyResetCode,
+  resetPassword,
+} from '../controllers/passwordController.js';
 import { protect } from '../middleware/authMiddleware.js';
 
 const router = express.Router();
@@ -29,6 +34,12 @@ const authLimiter = rateLimit({
 // ===== CÔNG KHAI =====
 router.post('/register', authLimiter, register);
 router.post('/login', authLimiter, login);
+
+// ===== ĐẶT LẠI MẬT KHẨU =====
+// Không cần đăng nhập — người quên mật khẩu thì không vào được
+router.post('/password/request', authLimiter, requestReset);
+router.post('/password/verify', authLimiter, verifyResetCode);
+router.post('/password/reset', authLimiter, resetPassword);
 
 // ===== CẦN ĐĂNG NHẬP =====
 router.get('/me', protect, getMe);

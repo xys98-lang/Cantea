@@ -3,6 +3,7 @@ import crypto from 'crypto';
 import bcrypt from 'bcryptjs';
 import User from '../models/User.js';
 import University from '../models/University.js';
+import { deliverCode, universityCodeEmail } from '../services/email.js';
 import { logger } from '../utils/logger.js';
 
 // ===== CẤU HÌNH =====
@@ -126,10 +127,28 @@ export const requestVerification = async (req, res) => {
   user.verificationStatus = 'pending';
   await user.save({ validateBeforeSave: false });
 
-  // TODO: thay bằng dịch vụ gửi mail thật (Resend / SendGrid / SES)
-  // Mail .edu.vn lọc spam gắt — gửi từ Gmail SMTP thường rơi vào Spam.
-  if (process.env.NODE_ENV !== 'production') {
-    logger.info(`[DEV] Mã xác thực cho ${universityEmail}: ${code}`);
+  const mail = await deliverCode(universityEmail, universityCodeEmail(code, university.name));
+
+  /**
+   * Gửi hỏng thì phải nói thẳng.
+   *
+   * Báo "đã gửi" trong khi email không tới nơi khiến người dùng ngồi
+   * chờ, bấm gửi lại, rồi đợi hết 60 giây mỗi lần — mà mã sẽ không bao
+   * giờ đến. Thà báo lỗi để họ thử lại hoặc liên hệ.
+   *
+   * Số lần gửi đã tăng ở trên nên phải hoàn lại, nếu không một lỗi phía
+   * nhà cung cấp lại ăn mất lượt gửi của người dùng.
+   */
+  if (!mail.ok) {
+    user.verification.sendCount = Math.max(0, (user.verification.sendCount || 1) - 1);
+    user.verification.lastSentAt = null;
+    await user.save({ validateBeforeSave: false });
+
+    return res.status(502).json({
+      status: 'error',
+      code: 'EMAIL_SEND_FAILED',
+      message: 'Không gửi được mã tới email trường. Thử lại sau ít phút.',
+    });
   }
 
   res.status(200).json({
@@ -142,8 +161,12 @@ export const requestVerification = async (req, res) => {
         shortName: university.shortName,
       },
       expiresInMinutes: CODE_TTL_MINUTES,
-      // Chỉ lộ mã ở môi trường dev để tiện test
-      ...(process.env.NODE_ENV !== 'production' && { devCode: code }),
+      /**
+       * Chỉ trả mã khi CHƯA cấu hình dịch vụ email — lúc đó email không
+       * đi đâu cả nên app phải hiện mã ra thì mới thử được.
+       * Cấu hình rồi thì mã chỉ nằm trong hộp thư, kể cả ở máy dev.
+       */
+      ...(!mail.sent && process.env.NODE_ENV !== 'production' && { devCode: code }),
     },
   });
 };

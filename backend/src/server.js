@@ -16,6 +16,12 @@ import scheduleRoutes from './routes/scheduleRoutes.js';
 import communityRoutes from './routes/communityRoutes.js';
 //import marketplaceRoutes from './routes/marketplaceRoutes.js';
 //import userRoutes from './routes/userRoutes.js';
+import bookmarkRoutes from './routes/bookmarkRoutes.js';
+import uploadRoutes from './routes/uploadRoutes.js';
+import messageRoutes from './routes/messageRoutes.js';
+import listingRoutes from './routes/listingRoutes.js';
+import domainRequestRoutes from './routes/domainRequestRoutes.js';
+import trendingRoutes from './routes/trendingRoutes.js';
 
 // Import middleware
 import { errorHandler } from './middleware/errorHandler.js';
@@ -55,6 +61,12 @@ app.use('/api/schedule', scheduleRoutes);
 app.use('/api/community', communityRoutes);
 //app.use('/api/marketplace', marketplaceRoutes);
 //app.use('/api/users', userRoutes);
+app.use('/api/bookmarks', bookmarkRoutes);
+app.use('/api/uploads', uploadRoutes);
+app.use('/api/messages', messageRoutes);
+app.use('/api/listings', listingRoutes);
+app.use('/api/domain-requests', domainRequestRoutes);
+app.use('/api/trending', trendingRoutes);
 
 // Health check
 app.get('/api/health', (req, res) => {

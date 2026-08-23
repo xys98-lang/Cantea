@@ -1,27 +1,35 @@
+import { Platform } from 'react-native';
 import { Tabs } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import { colors, type } from '../../src/theme';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useTheme, useThemedStyles } from '../../src/store/theme';
 
 export default function TabsLayout() {
+  const t = useTheme();
+  const s = useThemedStyles(styles);
+  const insets = useSafeAreaInsets();
+
   return (
     <Tabs
       screenOptions={{
         headerShown: false,
-        tabBarActiveTintColor: colors.brand,
-        tabBarInactiveTintColor: colors.inkFaint,
+        tabBarActiveTintColor: t.colors.ink,
+        tabBarInactiveTintColor: t.colors.icon,
         tabBarStyle: {
-          backgroundColor: colors.surface,
-          borderTopColor: colors.border,
+          backgroundColor: t.colors.surface,
+          borderTopColor: t.colors.line,
           borderTopWidth: 1,
-          height: 58,
-          paddingTop: 6,
+          height: 54 + insets.bottom,
+          paddingBottom: insets.bottom + (Platform.OS === 'ios' ? 2 : 6),
+          paddingTop: 7,
         },
-        tabBarLabelStyle: {
-          ...type.micro,
-          letterSpacing: 0.2,
-          marginTop: -2,
-        },
-        sceneStyle: { backgroundColor: colors.bg },
+        /**
+         * Năm mục trên màn 375pt còn 75pt mỗi mục. Nhãn 9.5px vừa đủ cho
+         * "Cộng đồng" mà không bị cắt — nhưng không còn chỗ cho nhãn dài hơn.
+         */
+        tabBarLabelStyle: { fontFamily: t.fonts.medium, fontSize: 9.5 },
+        tabBarIconStyle: { marginBottom: 0 },
+        sceneStyle: { backgroundColor: t.colors.bg },
       }}
     >
       <Tabs.Screen
@@ -29,16 +37,16 @@ export default function TabsLayout() {
         options={{
           title: 'Trang chủ',
           tabBarIcon: ({ color, focused }) => (
-            <Ionicons name={focused ? 'home' : 'home-outline'} size={22} color={color} />
+            <Ionicons name={focused ? 'home' : 'home-outline'} size={20} color={color} />
           ),
         }}
       />
       <Tabs.Screen
         name="schedule"
         options={{
-          title: 'Lịch học',
+          title: 'Lịch',
           tabBarIcon: ({ color, focused }) => (
-            <Ionicons name={focused ? 'grid' : 'grid-outline'} size={22} color={color} />
+            <Ionicons name={focused ? 'grid' : 'grid-outline'} size={20} color={color} />
           ),
         }}
       />
@@ -49,9 +57,18 @@ export default function TabsLayout() {
           tabBarIcon: ({ color, focused }) => (
             <Ionicons
               name={focused ? 'chatbubbles' : 'chatbubbles-outline'}
-              size={22}
+              size={20}
               color={color}
             />
+          ),
+        }}
+      />
+      <Tabs.Screen
+        name="canlib"
+        options={{
+          title: 'Canlib',
+          tabBarIcon: ({ color, focused }) => (
+            <Ionicons name={focused ? 'book' : 'book-outline'} size={20} color={color} />
           ),
         }}
       />
@@ -60,7 +77,7 @@ export default function TabsLayout() {
         options={{
           title: 'Cá nhân',
           tabBarIcon: ({ color, focused }) => (
-            <Ionicons name={focused ? 'person' : 'person-outline'} size={22} color={color} />
+            <Ionicons name={focused ? 'person' : 'person-outline'} size={20} color={color} />
           ),
         }}
       />
