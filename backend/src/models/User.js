@@ -126,6 +126,20 @@ const userSchema = new mongoose.Schema(
      */
     periodSchedule: { type: [periodEntrySchema], default: [] },
 
+    /**
+     * Mốc học kỳ do sinh viên tự đặt.
+     *
+     * Không lấy từ University: học kỳ mỗi trường mỗi khác, và người bảo lưu hay
+     * học vượt thì lệch hẳn với lịch chung.
+     *
+     * Cần cho hai việc: biết buổi lặp hàng tuần dừng ở đâu, và biết mũi tên
+     * chuyển tuần được đi tới đâu.
+     */
+    term: {
+      startDate: { type: Date, default: null },
+      endDate: { type: Date, default: null },
+    },
+
     preferences: {
       // 'period' = hiện "Tiết 1–3", 'clock' = hiện "07:00–09:30"
       timeDisplay: { type: String, enum: ['period', 'clock'], default: 'period' },

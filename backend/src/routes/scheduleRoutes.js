@@ -13,6 +13,8 @@ import {
   previewImport,
   commitImport,
   searchCourses,
+  getTerm,
+  setTerm,
 } from '../controllers/scheduleController.js';
 import { protect } from '../middleware/authMiddleware.js';
 
@@ -28,6 +30,9 @@ const router = express.Router();
 router.use(protect);
 
 // Khung tiết — đặt TRƯỚC route /:id để '/periods' không bị hiểu là một id
+router.get("/term", getTerm);
+router.put("/term", setTerm);
+
 router.get('/periods', getPeriods);
 router.put('/periods', setPeriods);
 router.delete('/periods', resetPeriods);

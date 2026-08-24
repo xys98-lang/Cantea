@@ -79,6 +79,11 @@ const periodsInput = Joi.object({
   remapCourses: Joi.boolean().default(false),
 });
 
+const termInput = Joi.object({
+  startDate: Joi.date().iso().allow(null).required(),
+  endDate: Joi.date().iso().allow(null).required(),
+});
+
 const badId = (res) =>
   res.status(400).json({ status: 'error', code: 'INVALID_ID', message: 'ID không hợp lệ' });
 
@@ -497,6 +502,69 @@ export const deleteCourse = async (req, res) => {
 };
 
 // ===== KHUNG TIẾT =====
+
+/** GET /api/schedule/term */
+export const getTerm = async (req, res) => {
+  const term = req.user.term || {};
+  res.status(200).json({
+    status: 'success',
+    data: {
+      startDate: term.startDate || null,
+      endDate: term.endDate || null,
+      isSet: Boolean(term.startDate && term.endDate),
+    },
+  });
+};
+
+/**
+ * PUT /api/schedule/term
+ *
+ * Cho xoá cả hai để quay về trạng thái chưa đặt, nhưng không cho đặt một nửa:
+ * một mốc đơn lẻ không trả lời được câu hỏi nào — không biết tuần nào là tuần
+ * đầu, cũng không biết khi nào hết học kỳ.
+ */
+export const setTerm = async (req, res) => {
+  const { error, value } = termInput.validate(req.body);
+  if
+(error) {
+    return res.status(400).json({
+      status: 'error',
+      code: 'VALIDATION_ERROR',
+      message: error.details[0].message,
+    });
+  }
+
+  const { startDate, endDate } = value;
+
+  if (Boolean(startDate) !== Boolean(endDate)) {
+    return res.status(400).json({
+      status: 'error',
+      code: 'VALIDATION_ERROR',
+      message: 'Cần cả ngày bắt đầu và ngày kết thúc',
+    });
+  }
+
+  if (startDate && new Date(endDate) <= new Date(startDate)) {
+    return res.status(400).json({
+      status: 'error',
+      code: 'VALIDATION_ERROR',
+      message: 'Ngày kết thúc phải sau ngày bắt đầu',
+    });
+  }
+
+  req.user.term = { startDate: startDate || null, endDate: endDate || null };
+  await req.user.save();
+
+  res.status(200).json({
+    status: 'success',
+    message: startDate ? 'Đã lưu mốc học kỳ' : 'Đã xoá mốc học kỳ',
+    data: {
+      startDate: req.user.term.startDate,
+      endDate: req.user.term.endDate,
+      isSet: Boolean(startDate),
+    },
+  });
+};
 
 export const getPeriods = async (req, res) => {
   res.status(200).json({
