@@ -32,6 +32,7 @@ import {
   categoryLabel,
   timeAgo,
 } from '../src/api/community';
+import { fetchReasons, reportPost } from '../src/api/reports';
 import { useTheme, useThemedStyles } from '../src/store/theme';
 
 export default function PostDetail() {
@@ -46,6 +47,18 @@ export default function PostDetail() {
   const [text, setText] = useState('');
   const [collections, setCollections] = useState([]);
   const [pickerOpen, setPickerOpen] = useState(false);
+
+  /**
+   * Ba trạng thái riêng thay vì một biến "đang mở màn nào": hai bảng có thể nối
+   * tiếp nhau, và gộp lại thì lúc đóng bảng lý do rất dễ rơi ngược về bảng hành
+   * động thay vì đóng hẳn.
+   */
+  const [actionsOpen, setActionsOpen] = useState(false);
+  const [reasonOpen, setReasonOpen] = useState(false);
+  const [reasons, setReasons] = useState([]);
+  const [pickedReason, setPickedReason] = useState(null);
+  const [reportNote, setReportNote] = useState('');
+  const [reporting, setReporting] = useState(false);
   const [anonymous, setAnonymous] = useState(true);
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
@@ -208,6 +221,16 @@ export default function PostDetail() {
           </Pressable>
           <View style={s.topActions}>
             <Pressable
+              onPress={() => {
+                setActionsOpen(true);
+                if (!reasons.length) fetchReasons().then(setReasons).catch(() => {});
+              }}
+              hitSlop={8}
+              accessibilityLabel="Thêm hành động"
+            >
+              <Ionicons name="ellipsis-horizontal" size={20} color={t.colors.inkMuted} />
+            </Pressable>
+            <Pressable
               onPress={toggleSave}
               onLongPress={() => setPickerOpen(true)}
               hitSlop={8}
@@ -253,13 +276,14 @@ export default function PostDetail() {
                   {post.likeCount}
                 </Text>
               </Pressable>
+              {/*
+                Bỏ nút lưu ở đây: thanh đầu trang đã có biểu tượng bookmark và
+                bảng ba chấm, ba đường cho cùng một việc là thừa. Lượt xem đổi
+                sang biểu tượng để cân với lượt thích bên trái.
+              */}
               <View style={s.rightActions}>
-                <Text style={s.views}>{post.views} lượt xem</Text>
-                <Pressable onPress={() => setPickerOpen(true)} hitSlop={6}>
-                  <Text style={s.saveTo}>
-                    {post.savedByMe ? 'Đổi bộ sưu tập' : 'Lưu vào…'}
-                  </Text>
-                </Pressable>
+                <Ionicons name="eye-outline" size={16} color={t.colors.inkMuted} />
+                <Text style={s.views}>{post.views}</Text>
               </View>
             </View>
           </>
@@ -319,6 +343,120 @@ export default function PostDetail() {
           ))
         )}
       </ScrollView>
+
+      {/* 12b · Bảng hành động */}
+      <Modal
+        visible={actionsOpen}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setActionsOpen(false)}
+      >
+        <Pressable style={s.backdrop} onPress={() => setActionsOpen(false)}>
+          <Pressable style={s.sheet} onPress={(e) => e.stopPropagation()}>
+            <Pressable
+              onPress={() => {
+                setActionsOpen(false);
+                setPickedReason(null);
+                setReportNote('');
+                setReasonOpen(true);
+              }}
+              style={s.actRow}
+            >
+              <Ionicons name="flag-outline" size={19} color={t.colors.ink} />
+              <View style={{ flex: 1 }}>
+                <Text style={s.actTitle}>Báo cáo bài này</Text>
+                <Text style={s.actLine}>
+                  Người kiểm duyệt sẽ xem lại. Tác giả không biết ai báo cáo.
+                </Text>
+              </View>
+            </Pressable>
+
+            <Pressable
+              onPress={() => {
+                setActionsOpen(false);
+                setPickerOpen(true);
+              }}
+              style={s.actRow}
+            >
+              <Ionicons name="bookmark-outline" size={19} color={t.colors.ink} />
+              <Text style={s.actTitle}>Lưu vào bộ sưu tập</Text>
+            </Pressable>
+
+            <Pressable onPress={() => setActionsOpen(false)} style={s.actCancel}>
+              <Text style={s.actCancelText}>Huỷ</Text>
+            </Pressable>
+          </Pressable>
+        </Pressable>
+      </Modal>
+
+      {/* 12c · Chọn lý do */}
+      <Modal
+        visible={reasonOpen}
+        transparent
+        animationType="fade"
+ onRequestClose={() => setReasonOpen(false)}
+      >
+        <Pressable style={s.backdrop} onPress={() => setReasonOpen(false)}>
+          <Pressable style={s.sheet} onPress={(e) => e.stopPropagation()}>
+            <Text style={s.sheetTitle}>Vì sao bạn báo cáo bài này?</Text>
+            <Text style={s.actLine}>
+              Chọn một lý do. Người kiểm duyệt xem lý do, không xem tên bạn.
+            </Text>
+
+            {reasons.map((r) => (
+              <Pressable
+                key={r.code}
+                onPress={() => setPickedReason(r.code)}
+                style={[s.reasonRow, pickedReason === r.code && s.reasonRowOn]}
+              >
+                <Text
+                  style={[s.reasonText, pickedReason === r.code && s.reasonTextOn]}
+                >
+                  {r.label}
+                </Text>
+                {pickedReason === r.code && (
+                  <Ionicons name="checkmark" size={16} color={t.colors.accent} />
+                )}
+              </Pressable>
+            ))}
+
+            <View style={s.noteHead}>
+              <Text style={s.noteLabel}>Ghi chú thêm</Text>
+              <Text style={s.noteCount}>{reportNote.length} / 300</Text>
+            </View>
+            <TextInput
+              value={reportNote}
+              onChangeText={setReportNote}
+              placeholder="Bài này ghi rõ tên và lớp của một bạn…"
+              placeholderTextColor={t.colors.icon}
+              multiline
+              maxLength={300}
+              style={s.noteInput}
+            />
+
+            <Pressable
+              disabled={!pickedReason || reporting}
+              onPress={async () => {
+                setReporting(true);
+                try {
+                  await reportPost(id, pickedReason, reportNote.trim());
+                  setReasonOpen(false);
+                  Alert.alert('Đã gửi', 'Cảm ơn bạn. Người kiểm duyệt sẽ xem lại bài này.');
+                } catch (e) {
+                  Alert.alert('Không gửi được', e.message || 'Thử lại sau');
+                } finally {
+                  setReporting(false);
+                }
+              }}
+              style={[s.sendBtn, (!pickedReason || reporting) && s.sendBtnOff]}
+            >
+              <Text style={s.sendBtnText}>
+                {reporting ? 'Đang gửi…' : 'Gửi báo cáo'}
+              </Text>
+            </Pressable>
+          </Pressable>
+        </Pressable>
+      </Modal>
 
       <Modal
         visible={pickerOpen}
@@ -429,6 +567,64 @@ const styles = (t) =>
     padding: t.spacing.lg,
     paddingBottom: t.spacing.xl,
   },
+  actRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: t.spacing.md,
+    paddingVertical: 13,
+    borderBottomWidth: 1,
+    borderBottomColor: t.colors.line,
+  },
+  actTitle: { ...t.type.label, color: t.colors.ink },
+  actLine: { ...t.type.caption, fontSize: 11.5, color: t.colors.inkMuted, marginTop: 2 },
+  actCancel: { alignItems: 'center', paddingVertical: 13, marginTop: t.spacing.sm },
+  actCancelText: { ...t.type.label, color: t.colors.inkBody },
+
+  reasonRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    borderWidth: 1,
+    borderColor: t.colors.line,
+    borderRadius: t.radius.md,
+    paddingHorizontal: t.spacing.md,
+    paddingVertical: 11,
+    marginTop: 7,
+  },
+  reasonRowOn: { borderColor: t.colors.accent, borderWidth: 1.5 },
+  reasonText: { ...t.type.label, color: t.colors.inkBody },
+  reasonTextOn: { color: t.colors.ink },
+
+  noteHead: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'baseline',
+    marginTop: t.spacing.lg,
+  },
+  noteLabel: { ...t.type.micro, color: t.colors.inkMuted },
+  noteCount: { ...t.type.caption, fontSize: 11, color: t.colors.icon },
+  noteInput: {
+    ...t.type.body,
+    color: t.colors.ink,
+    borderWidth: 1,
+    borderColor: t.colors.line,
+    borderRadius: t.radius.md,
+    padding: t.spacing.md,
+    minHeight: 72,
+    marginTop: 6,
+    textAlignVertical: 'top',
+  },
+
+  sendBtn: {
+    alignItems: 'center',
+    backgroundColor: t.colors.accent,
+    borderRadius: t.radius.md,
+    paddingVertical: 14,
+    marginTop: t.spacing.lg,
+  },
+  sendBtnOff: { opacity: 0.4 },
+  sendBtnText: { ...t.type.label, color: t.colors.onAccent },
+
   sheetTitle: { ...t.type.heading, color: t.colors.ink, marginBottom: t.spacing.md },
   colRow: {
     flexDirection: 'row',
