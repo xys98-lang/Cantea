@@ -1,6 +1,7 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  Dimensions,
   Pressable,
   RefreshControl,
   ScrollView,
@@ -18,6 +19,18 @@ import { useTheme, useThemedStyles } from '../../src/store/theme';
 
 const ROW_H = 46;
 const PERIOD_W = 26;
+
+/**
+ * Lưới luôn dựng đủ bảy ngày, nhưng khung nhìn chỉ rộng năm cột.
+ *
+ * Cột phải có bề rộng cố định tính bằng điểm ảnh chứ không phải flex: trong một
+ * khung cuộn ngang, flex sẽ ép bảy cột vừa khít màn hình và chẳng còn gì để kéo.
+ * Chia cho 5 để năm ngày đầu lấp đúng khung, hai ngày cuối tuần dôi ra bên phải.
+ */
+const VISIBLE_COLS = 5;
+const SCREEN_W = Dimensions.get('window').width;
+const SIDE_PAD = 16;
+const COL_W = Math.floor((SCREEN_W - SIDE_PAD * 2 - PERIOD_W) / VISIBLE_COLS);
 
 const WEEKDAYS = [
   { value: 2, short: 'T2' },
@@ -191,6 +204,16 @@ export default function ScheduleScreen() {
     return map;
   }, [courses]);
 
+  /**
+   * Thứ 7 và Chủ nhật chỉ hiện khi tuần thực sự có buổi rơi vào đó.
+   *
+   * Màn hình điện thoại chia bảy cột thì mỗi cột hẹp tới mức tên môn bị cắt,
+   * mà phần lớn tuần không có gì ở hai cột cuối. Cho chúng xuất hiện theo nhu
+   * cầu giữ được lưới rộng rãi cho trường hợp thường gặp, và vẫn có chỗ thật
+   * cho buổi học bù khi cần.
+   */
+  const days = useMemo(() => [...WEEKDAYS, ...WEEKEND], []);
+
   const visiblePeriods = useMemo(() => {
     if (!periods.length) return [];
     if (!courses.length) return periods.slice(0, 9);
@@ -251,7 +274,7 @@ export default function ScheduleScreen() {
     courses.forEach((course) => {
       const id = String(course.id || course._id);
       (course.meetings || []).forEach((m) => {
-        const dayIdx = WEEKDAYS.findIndex((d) => d.value === m.dayOfWeek);
+        const dayIdx = days.findIndex((d) => d.value === m.dayOfWeek);
         if (dayIdx === -1) return;
 
         const from = rowStart(toMinutes(m.startTime));
@@ -303,10 +326,43 @@ export default function ScheduleScreen() {
 
   /** Chạm vào ô trống trên lưới để thêm môn ngay tại chỗ đó */
   const addAt = (dayIdx, periodIdx) => {
-    const day = WEEKDAYS[dayIdx].value;
+    const day = days[dayIdx].value;
     const period = visiblePeriods[periodIdx]?.period;
     router.push(`/course-edit?day=${day}&period=${period}`);
   };
+
+  /**
+   * Hai khung cuộn ngang phải đi cùng nhau, nếu không nhãn T2 sẽ đứng trên cột T4.
+   *
+   * Cờ `driver` chặn vòng lặp: khung nào đang được ngón tay kéo thì khung kia chỉ
+   * nghe theo, không đẩy ngược lại. Thiếu nó thì hai bên liên tục đá nhau và lưới
+   * rung khi vuốt nhanh.
+   */
+  const headRef = useRef(null);
+  const gridRef = useRef(null);
+  const driver = useRef(null);
+
+  const syncFrom = (who) => (e) => {
+    if (driver.current && driver.current !== who) return;
+    driver.current = who;
+    const x = e.nativeEvent.contentOffset.x;
+    const target = who === 'head' ? gridRef : headRef;
+    target.current?.scrollTo({ x, animated: false });
+  };
+
+  /**
+   * Hôm nay là T7 hay CN thì cuộn sẵn tới đó khi mở màn. Người mở app vào cuối
+   * tuần quan tâm hôm nay, mà hôm nay lại nằm ngoài khung nhìn mặc định.
+   */
+  useEffect(() => {
+    if (today < 7) return;
+    const x = (days.length - VISIBLE_COLS) * COL_W;
+    const id = setTimeout(() => {
+      headRef.current?.scrollTo({ x, animated: false });
+      gridRef.current?.scrollTo({ x, animated: false });
+    }, 0);
+    return () => clearTimeout(id);
+  }, [today, days.length]);
 
   if (loading) {
     return (
@@ -324,12 +380,26 @@ export default function ScheduleScreen() {
     <View style={s.dayHeadWrap}>
       <View style={s.dayHeadRow}>
         <View style={{ width: PERIOD_W }} />
-        {WEEKDAYS.map((d) => {
+        <ScrollView
+          ref={headRef}
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          scrollEventThrottle={16}
+          onScroll={syncFrom('head')}
+          onScrollBeginDrag={() => (driver.current = 'head')}
+          onMomentumScrollEnd={() => (driver.current = null)}
+          onScrollEndDrag={() => (driver.current = null)}
+        >
+        {days.map((d) => {
           const date = dateOfVnDay(monday, d.value);
           const isToday = d.value === today;
           const isSel = d.value === selectedDay;
           return (
-            <Pressable key={d.value} onPress={() => setSelectedDay(d.value)} style={s.dayHead}>
+            <Pressable
+              key={d.value}
+              onPress={() => setSelectedDay(d.value)}
+              style={[s.dayHead, { width: COL_W }]}
+            >
               <Text style={[s.dayShort, isSel && s.dayShortOn]}>{d.short}</Text>
               <View style={[s.dayNumWrap, isToday && s.dayNumToday]}>
                 <Text
@@ -345,25 +415,8 @@ export default function ScheduleScreen() {
             </Pressable>
           );
         })}
+        </ScrollView>
       </View>
-
-      {WEEKEND.some((d) => weekendSlots[d.value] > 0) && (
-        <View style={s.weekendRow}>
-          {WEEKEND.filter((d) => weekendSlots[d.value] > 0).map((d) => (
-            <Pressable
-              key={d.value}
-              onPress={() => setSelectedDay(d.value)}
-              style={[s.weekendPill, selectedDay === d.value && s.weekendPillOn]}
-            >
-              <Text
-                style={[s.weekendText, selectedDay === d.value && { color: t.colors.inverse }]}
-              >
-                {d.short} · {weekendSlots[d.value]} buổi
-              </Text>
-            </Pressable>
-          ))}
-        </View>
-      )}
     </View>
   );
 
@@ -442,8 +495,18 @@ export default function ScheduleScreen() {
                   ))}
                 </View>
 
-                <View style={s.gridBody}>
-                  {WEEKDAYS.map((d, di) => (
+                <ScrollView
+                  ref={gridRef}
+                  horizontal
+                  showsHorizontalScrollIndicator={false}
+                  scrollEventThrottle={16}
+                  onScroll={syncFrom('grid')}
+                  onScrollBeginDrag={() => (driver.current = 'grid')}
+                  onMomentumScrollEnd={() => (driver.current = null)}
+                  onScrollEndDrag={() => (driver.current = null)}
+                >
+                <View style={[s.gridBody, { width: days.length * COL_W }]}>
+                  {days.map((d, di) => (
                     <View key={d.value} style={[s.dayCol, di > 0 && s.dayColLine]}>
                       {visiblePeriods.map((p, pi) => (
                         /**
@@ -464,8 +527,12 @@ export default function ScheduleScreen() {
 
                   {Object.entries(blocksByDay).flatMap(([dayIdx, list]) =>
                     list.map((b) => {
-                      const colPct = 100 / WEEKDAYS.length;
-                      const laneW = colPct / (b.lanes || 1);
+                      /**
+                        * Định vị bằng điểm ảnh chứ không phải phần trăm: phần trăm
+                        * tính theo bề rộng khung cha, mà khung cha giờ rộng hơn màn
+                        * hình. Dùng phần trăm thì khối môn trôi lệch khỏi cột.
+                        */
+                      const laneW = COL_W / (b.lanes || 1);
                       return (
                         <Pressable
                           key={b.key}
@@ -473,8 +540,8 @@ export default function ScheduleScreen() {
                           style={[
                             s.block,
                             {
-                              left: `${Number(dayIdx) * colPct + b.lane * laneW}%`,
-                              width: `${laneW}%`,
+                              left: Number(dayIdx) * COL_W + b.lane * laneW,
+                              width: laneW,
                               top: b.row * ROW_H + 2,
                               height: b.span * ROW_H - 5,
                             },
@@ -504,6 +571,7 @@ export default function ScheduleScreen() {
                     })
                   )}
                 </View>
+                </ScrollView>
               </View>
 
               <Text style={s.hint}>Chạm ô trống để thêm môn · Chạm môn để sửa</Text>
@@ -648,7 +716,7 @@ const styles = (t) =>
     borderBottomColor: t.colors.line,
   },
   dayHeadRow: { flexDirection: 'row' },
-  dayHead: { flex: 1, alignItems: 'center' },
+  dayHead: { alignItems: 'center' },
   dayShort: { ...t.type.captionStrong, color: t.colors.inkMuted },
   dayShortOn: { fontFamily: t.fonts.bold, color: t.colors.ink },
   dayNumWrap: {
@@ -676,10 +744,10 @@ const styles = (t) =>
   weekendText: { fontFamily: t.fonts.semibold, fontSize: 11.5, color: t.colors.inkBody },
 
   grid: { flexDirection: 'row', marginTop: t.spacing.md },
-  gridBody: { flex: 1, position: 'relative', flexDirection: 'row' },
+  gridBody: { position: 'relative', flexDirection: 'row' },
   periodCell: { height: ROW_H, alignItems: 'flex-end', paddingRight: 6, paddingTop: 3 },
   periodNum: { fontFamily: t.fonts.medium, fontSize: 10, color: t.colors.icon },
-  dayCol: { flex: 1 },
+  dayCol: { width: COL_W },
   dayColLine: { borderLeftWidth: 1, borderLeftColor: t.colors.line },
   slot: { height: ROW_H, borderTopWidth: 1, borderTopColor: t.colors.line },
 

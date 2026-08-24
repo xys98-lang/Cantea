@@ -16,6 +16,7 @@ export default function ProfileEdit() {
   const [nickname, setNickname] = useState(user?.nickname || '');
   const [major, setMajor] = useState(user?.major || '');
   const [year, setYear] = useState(user?.year || null);
+  const [alumni, setAlumni] = useState(Boolean(user?.isAlumni));
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
@@ -38,6 +39,7 @@ export default function ProfileEdit() {
     if (nickname.trim() !== (user?.nickname || '')) payload.nickname = nickname.trim();
     if (major.trim() !== (user?.major || '')) payload.major = major.trim();
     if (year !== (user?.year || null)) payload.year = year;
+    if (alumni !== Boolean(user?.isAlumni)) payload.isAlumni = alumni;
 
     if (Object.keys(payload).length === 0) {
       router.back();
@@ -131,7 +133,10 @@ export default function ProfileEdit() {
           return (
             <Pressable
               key={y}
-              onPress={() => setYear(on ? null : y)}
+              onPress={() => {
+                setYear(on ? null : y);
+                if (!on) setAlumni(false);
+              }}
               style={[s.yearChip, on && s.yearChipOn]}
             >
               <Text style={[s.yearText, on && s.yearTextOn]}>{y}</Text>
@@ -140,6 +145,28 @@ export default function ProfileEdit() {
         })}
       </View>
       <Text style={s.yearHint}>Bấm lại vào số đang chọn để bỏ trống</Text>
+
+      {/*
+        Ô này nằm ngay dưới hàng năm học vì hai thứ trả lời cùng một câu hỏi.
+        Chọn nó thì bỏ năm học, và ngược lại — người dùng thấy ngay hệ quả
+        thay vì phát hiện sau khi bấm lưu.
+      */}
+      <Pressable
+        onPress={() => {
+          const next = !alumni;
+          setAlumni(next);
+          if (next) setYear(null);
+        }}
+        style={[s.alumniRow, alumni && s.alumniRowOn]}
+      >
+        <View style={[s.alumniBox, alumni && s.alumniBoxOn]}>
+          {alumni && <Text style={s.alumniTick}>✓</Text>}
+        </View>
+        <View style={{ flex: 1 }}>
+          <Text style={s.alumniTitle}>Đã tốt nghiệp</Text>
+          <Text style={s.alumniLine}>Bài viết của bạn sẽ hiện nhãn cựu sinh viên</Text>
+        </View>
+      </Pressable>
 
       {Boolean(error) && (
         <Callout tone="warn" style={{ marginTop: t.spacing.md }}>
@@ -228,4 +255,29 @@ const styles = (t) =>
     yearText: { ...t.type.label, color: t.colors.ink },
     yearTextOn: { color: t.colors.onAccent },
     yearHint: { ...t.type.caption, fontSize: 11, color: t.colors.inkMuted, marginTop: 6 },
+
+    alumniRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: t.spacing.md,
+      marginTop: t.spacing.md,
+      borderWidth: 1,
+      borderColor: t.colors.line,
+      borderRadius: t.radius.md,
+      padding: t.spacing.md,
+    },
+    alumniRowOn: { borderColor: t.colors.accent },
+    alumniBox: {
+      width: 22,
+      height: 22,
+      borderRadius: 6,
+      borderWidth: 1,
+      borderColor: t.colors.line,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    alumniBoxOn: { backgroundColor: t.colors.accent, borderColor: t.colors.accent },
+    alumniTick: { color: t.colors.onAccent, fontSize: 13, fontFamily: t.fonts.bold },
+    alumniTitle: { ...t.type.label, color: t.colors.ink },
+    alumniLine: { ...t.type.caption, fontSize: 11, color: t.colors.inkMuted, marginTop: 1 },
   });

@@ -104,6 +104,18 @@ const userSchema = new mongoose.Schema(
     bio: { type: String, maxlength: 500, default: '' },
     major: { type: String, default: '' },
     year: { type: Number, min: 1, max: 6 },
+    /**
+     * Cựu sinh viên tự khai, không kiểm chứng.
+     *
+     * Tách khỏi `year` thay vì thêm một giá trị đặc biệt: year đang ràng buộc
+     * 1–6 và đổi kiểu sẽ phải chuyển toàn bộ dữ liệu cũ. Hai trường loại trừ
+     * nhau về nghĩa, controller lo việc đó.
+     *
+     * Không ảnh hưởng tới quyền: người đã tốt nghiệp vẫn đọc và đăng được
+     * trong bảng tin trường. Đây là nhãn để người đọc biết ai đang trả lời,
+     * không phải hàng rào.
+     */
+    isAlumni: { type: Boolean, default: false },
     studentId: { type: String, unique: true, sparse: true },
 
     // ===== THỜI KHOÁ BIỂU =====

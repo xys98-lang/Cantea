@@ -26,6 +26,7 @@ const profileSchema = Joi.object({
     'number.min': 'Năm học từ 1 đến 6',
     'number.max': 'Năm học từ 1 đến 6',
   }),
+  isAlumni: Joi.boolean(),
   profilePhoto: Joi.string().trim().allow('', null),
 })
   .min(1)
@@ -72,6 +73,17 @@ export const updateProfile = async (req, res) => {
   if (value.nickname !== undefined) user.nickname = value.nickname;
   if (value.major !== undefined) user.major = value.major;
   if (value.year !== undefined) user.year = value.year === null ? undefined : value.year;
+  /**
+   * Hai trường loại trừ nhau: đã tốt nghiệp thì không còn năm học, và chọn năm
+   * học thì không còn là cựu sinh viên. Ép ở đây chứ không để màn hình tự lo —
+   * màn hình thứ hai gọi API sau này sẽ không nhớ quy tắc đó.
+   */
+  if (value.isAlumni !== undefined) {
+    user.isAlumni = value.isAlumni;
+    if (value.isAlumni) user.year = undefined;
+  }
+  if (value.year !== undefined && value.year !== null) user.isAlumni = false;
+
   if (value.profilePhoto !== undefined) user.profilePhoto = value.profilePhoto || null;
 
   await user.save();
