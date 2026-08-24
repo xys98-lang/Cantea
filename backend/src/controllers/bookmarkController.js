@@ -159,8 +159,8 @@ export const deleteCollection = async (req, res) => {
 
   const fallback = await Collection.ensureDefault(req.user._id);
   const moved = await Bookmark.updateMany(
-    { user: req.user._id, collection: col._id },
-    { $set: { collection: fallback._id } }
+    { user: req.user._id, folder: col._id },
+    { $set: { folder: fallback._id } }
   );
 
   await Collection.updateOne(
@@ -220,10 +220,10 @@ export const savePost = async (req, res) => {
 
   if (existing) {
     // Đã lưu rồi — chuyển sang bộ khác thay vì tạo bản trùng
-    if (String(existing.collection) !== String(target._id)) {
-      await Collection.updateOne({ _id: existing.collection }, { $inc: { itemCount: -1 } });
+    if (String(existing.folder) !== String(target._id)) {
+      await Collection.updateOne({ _id: existing.folder }, { $inc: { itemCount: -1 } });
       await Collection.updateOne({ _id: target._id }, { $inc: { itemCount: 1 } });
-      existing.collection = target._id;
+      existing.folder = target._id;
     }
     if (value.note !== undefined) existing.note = value.note;
     await existing.save();
@@ -238,7 +238,7 @@ export const savePost = async (req, res) => {
   await Bookmark.create({
     user: req.user._id,
     post: post._id,
-    collection: target._id,
+    folder: target._id,
     note: value.note,
   });
   await Collection.updateOne({ _id: target._id }, { $inc: { itemCount: 1 } });
@@ -269,7 +269,7 @@ export const unsavePost = async (req, res) => {
     });
   }
 
-  await Collection.updateOne({ _id: removed.collection }, { $inc: { itemCount: -1 } });
+  await Collection.updateOne({ _id: removed.folder }, { $inc: { itemCount: -1 } });
 
   res.status(200).json({ status: 'success', message: 'Đã bỏ lưu', data: { saved: false } });
 };
@@ -283,7 +283,7 @@ export const getSaved = async (req, res) => {
 
   const filter = { user: req.user._id };
   if (req.query.collection && mongoose.isValidObjectId(req.query.collection)) {
-    filter.collection = new mongoose.Types.ObjectId(req.query.collection);
+    filter.folder = new mongoose.Types.ObjectId(req.query.collection);
   }
 
   const [bookmarks, total] = await Promise.all([
@@ -293,6 +293,16 @@ export const getSaved = async (req, res) => {
       .limit(limit)
       .populate({
         path: 'post',
+        /**
+         * Phải xin '+author' vì Post.author để select:false. Không xin thì trường này
+         * vắng mặt, đoạn tra tên người đăng bên dưới tìm theo mảng rỗng, và mọi bài
+         * công khai hiện ra là "Người dùng đã xoá". Nó cũng làm isMine sai, kéo theo
+         * canDelete sai — bài của chính mình lưu lại thì không xoá được.
+         *
+         * Dấu '+' giữ nguyên các trường mặc định, chỉ thêm author vào. Id thô đi tới
+         * serializePost là an toàn: đó chính là chỗ quyết định ẩn hay hiện.
+         */
+        select: '+author',
         populate: [
           { path: 'university', select: 'shortName name' },
           { path: 'topic', select: 'title emoji color' },
