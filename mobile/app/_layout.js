@@ -22,11 +22,27 @@ import { configureForeground } from '../src/services/notifications';
  */
 const useKeyboardBlurFix = () => {
   useEffect(() => {
-    const sub = Keyboard.addListener('keyboardDidHide', () => {
+    const shown = { at: 0 };
+    const onShow = Keyboard.addListener('keyboardDidShow', () => {
+      shown.at = Date.now();
+    });
+    const onHide = Keyboard.addListener('keyboardDidHide', () => {
+      /**
+       * Bỏ qua nếu bàn phím vừa mở chưa tới nửa giây.
+       *
+       * Trên iOS, keyboardDidHide đôi khi bắn ra ngay trong lúc bàn phím đang
+       * bung lên. Gỡ focus lúc đó sẽ đóng lại chính bàn phím vừa mở — và với ô
+       * nhập có autoFocus như màn xác thực, người dùng không bao giờ gõ được.
+       */
+      if (Date.now() - shown.at < 500) return;
+
       const focused = TextInput.State?.currentlyFocusedInput?.();
       if (focused) TextInput.State.blurTextInput(focused);
     });
-    return () => sub.remove();
+    return () => {
+      onShow.remove();
+      onHide.remove();
+    };
   }, []);
 };
 

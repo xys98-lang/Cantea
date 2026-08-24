@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import {
   ActivityIndicator,
   Pressable,
@@ -79,6 +79,12 @@ export const Field = ({ label, hint, error, style, ...props }) => {
  * và chức năng tự điền mã của hệ điều hành vẫn hoạt động.
  */
 export const OtpInput = ({ value = '', onChange, length = 6, autoFocus }) => {
+  /**
+   * Sáu ô nhìn thấy chỉ là View, ô nhập thật nằm ẩn phía sau. Không có ref thì
+   * chạm vào chúng chẳng gọi được ai — người dùng phải chạm trúng vùng ẩn mới
+   * mở được bàn phím, mà vùng đó thì không nhìn thấy.
+   */
+  const inputRef = useRef(null);
   const t = useTheme();
   const s = useThemedStyles(styles);
   const [focused, setFocused] = useState(false);
@@ -86,7 +92,7 @@ export const OtpInput = ({ value = '', onChange, length = 6, autoFocus }) => {
 
   return (
     <View style={{ marginTop: t.spacing.md }}>
-      <View style={s.otpRow}>
+      <Pressable style={s.otpRow} onPress={() => inputRef.current?.focus()}>
         {Array.from({ length }).map((_, i) => {
           const active = focused && i === digits.length;
           return (
@@ -98,8 +104,9 @@ export const OtpInput = ({ value = '', onChange, length = 6, autoFocus }) => {
             </View>
           );
         })}
-      </View>
+      </Pressable>
       <TextInput
+        ref={inputRef}
         value={value}
         onChangeText={(v) => onChange(v.replace(/\D/g, '').slice(0, length))}
         keyboardType="number-pad"
