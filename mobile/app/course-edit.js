@@ -23,6 +23,7 @@ import {
   DAYS,
 } from '../src/api/schedule';
 import { useTheme, useThemedStyles } from '../src/store/theme';
+import { shadow } from '../src/theme';
 
 const emptyMeeting = (day = 2, period = 1, campus = '') => ({
   dayOfWeek: Number(day) || 2,

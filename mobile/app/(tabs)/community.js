@@ -22,6 +22,8 @@ import {
   timeAgo,
 } from '../../src/api/community';
 import { useTheme, useThemedStyles } from '../../src/store/theme';
+import { shadow } from '../../src/theme';
+import { TrendingAlert } from '../../src/components/TrendingAlert';
 
 /** Thẻ chủ đề theo mùa — mảng màu đặc để tách hẳn khỏi dòng bài trắng bên dưới */
 const TopicCard = ({ topic, active, onPress }) => {

@@ -25,6 +25,7 @@ import {
   toMinutes,
 } from '../src/api/schedule';
 import { useTheme, useThemedStyles } from '../src/store/theme';
+import { shadow } from '../src/theme';
 
 /** Ô nhập giờ dạng HH:MM, tự chèn dấu hai chấm khi gõ */
 const TimeInput = ({ value, onChange, style }) => {

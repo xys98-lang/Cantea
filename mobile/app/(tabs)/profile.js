@@ -4,7 +4,8 @@ import { Ionicons } from '@expo/vector-icons';
 import { Button } from '../../src/components/ui';
 import { Screen } from '../../src/components/Screen';
 import { useAuth } from '../../src/store/auth';
-import { useTheme, useThemedStyles } from '../../src/store/theme';
+import { useTheme, useThemedStyles, THEME_OPTIONS } from '../../src/store/theme';
+import { shadow } from '../../src/theme';
 
 /**
  * Hàm nhận theme chứ không phải object cố định.

@@ -25,6 +25,7 @@ import {
 } from '../src/api/bookmarks';
 import { categoryLabel, timeAgo } from '../src/api/community';
 import { useTheme, useThemedStyles } from '../src/store/theme';
+import { shadow } from '../src/theme';
 
 const SavedCard = ({ post, onPress }) => {
   const t = useTheme();
