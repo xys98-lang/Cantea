@@ -46,8 +46,18 @@ export default function Home() {
   );
 
   const STATUS = statusOf(t);
-  const status = STATUS[user?.verificationStatus] || STATUS.guest;
   const uni = user?.university;
+
+  /**
+   * Đã xác thực thì huy hiệu hiện tên viết tắt của trường thay vì chữ
+   * "ĐÃ XÁC THỰC". Với người đã qua bước đó, biết mình thuộc trường nào hữu ích
+   * hơn là được nhắc lại một việc vừa làm xong. Rơi về nhãn cũ nếu trường chưa
+   * có shortName, để huy hiệu không bao giờ trống.
+   */
+  const status =
+    user?.verificationStatus === 'verified'
+      ? { ...STATUS.verified, label: uni?.shortName || STATUS.verified.label }
+      : STATUS[user?.verificationStatus] || STATUS.guest;
   const dayLabel = DAYS.find((d) => d.value === today.dayOfWeek)?.label || 'Hôm nay';
 
   return (
@@ -65,7 +75,6 @@ export default function Home() {
       }}
     >
       <Text style={s.greeting}>Chào {user?.firstName || 'bạn'}</Text>
-      {Boolean(uni?.shortName) && <Text style={s.uni}>{uni.shortName}</Text>}
 
       <View style={s.sectionHead}>
         <Text style={s.sectionTitle}>{dayLabel}</Text>
