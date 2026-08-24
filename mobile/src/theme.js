@@ -255,7 +255,7 @@ export const palettes = {
       accent: '#6B4FF0',
       accentPressed: '#543EB9',
       onAccent: '#FFFFFF',
-      inverse: '#FFFFFF',
+      inverse: '#0A0A0B',
       alert: '#F0685E',
       alertSoft: '#2A1412',
       alertInk: '#F8A79D',

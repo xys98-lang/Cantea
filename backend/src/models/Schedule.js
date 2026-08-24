@@ -35,6 +35,38 @@ const meetingSchema = new mongoose.Schema(
     room: { type: String, trim: true, maxlength: 50, default: '' },
     building: { type: String, trim: true, maxlength: 50, default: '' },
     note: { type: String, trim: true, maxlength: 200, default: '' },
+
+    /**
+     * Buổi lặp hàng tuần, hay chỉ diễn ra một lần.
+     *
+     * Kỳ thi và buổi học bù gắn với MỘT ngày cụ thể, không phải một thứ trong
+     * tuần. Đặt cờ ở cấp buổi chứ không phải cấp môn: buổi thi thường là buổi
+     * thứ tư của môn đã có ba buổi lặp — chung tên môn, chung giảng viên.
+     */
+    repeats: { type: Boolean, default: true },
+
+    /**
+     * Chỉ dùng khi repeats = false. dayOfWeek vẫn được suy ra từ ngày này để
+     * lưới lịch xếp đúng cột mà không phải biết về hai loại buổi.
+     */
+    date: { type: Date, default: null },
+
+    /**
+     * Tên riêng của buổi này, để trống thì dùng tên môn.
+     *
+     * Buổi thi hay buổi ngoại khoá không phải một môn riêng — nó là một buổi
+     * khác thường của môn đang có. Tách thành Schedule mới sẽ làm danh sách môn
+     * học mọc thêm dòng lạ, trong khi sinh viên vẫn chỉ học đúng một môn đó.
+     */
+    label: { type: String, trim: true, maxlength: 120, default: '' },
+
+    /**
+     * Các ngày buổi lặp này KHÔNG diễn ra.
+     *
+     * Nghỉ một tuần vì trùng lịch thi là chuyện thường. Xoá hẳn buổi lặp thì mất
+     * cả chuỗi; giữ nguyên thì lịch báo có học trong khi thực tế nghỉ.
+     */
+    skipDates: { type: [Date], default: [] },
   },
   { _id: true }
 );

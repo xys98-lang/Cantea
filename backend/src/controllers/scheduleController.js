@@ -29,14 +29,37 @@ const COURSE_COLORS = [
 const timePattern = /^([01]\d|2[0-3]):([0-5]\d)$/;
 
 const meetingInput = Joi.object({
-  dayOfWeek: Joi.number().integer().min(2).max(8).required().messages({
-    'any.required': 'Chọn thứ trong tuần',
+  /**
+   * Buổi một lần không cần chọn thứ — thứ suy ra từ ngày. Bắt chọn cả hai là
+   * mở đường cho dữ liệu tự mâu thuẫn: ngày 12/04 mà thứ ghi là Thứ Ba.
+   */
+  repeats: Joi.boolean().default(true),
+  date: Joi.date().iso().when('repeats', {
+    is: false,
+    then: Joi.required().messages({ 'any.required': 'Chọn ngày diễn ra buổi này' }),
+    otherwise: Joi.forbidden(),
+  }),
+  dayOfWeek: Joi.number().integer().min(2).max(8).when('repeats', {
+    is: false,
+    then: Joi.optional(),
+    otherwise: Joi.required().messages({ 'any.required': 'Chọn thứ trong tuần' }),
   }),
   fromPeriod: Joi.number().integer().min(1).max(30),
   toPeriod: Joi.number().integer().min(1).max(30),
   startTime: Joi.string().pattern(timePattern),
   endTime: Joi.string().pattern(timePattern),
-  campus: Joi.string().trim().uppercase().max(20).allow('').default(''),
+  /**
+   * Không uppercase và nới lên 60: ô cơ sở cho phép tự gõ tên có dấu như
+   * "Bình Dương". Phải khớp với ràng buộc trong Schedule.js, lệch một bên là
+   * dữ liệu bị cắt hoặc viết hoa mà không ai biết vì sao.
+   */
+  campus: Joi.string().trim().max(60).allow('').default(''),
+  /**
+   * Tên riêng của buổi. Chỉ có nghĩa với buổi một lần — buổi lặp mà mang tên
+   * khác tên môn thì lịch đọc lên mâu thuẫn với chính nó.
+   */
+  label: Joi.string().trim().max(120).allow('').default(''),
+  skipDates: Joi.array().items(Joi.date().iso()).max(60).default([]),
   room: Joi.string().trim().max(50).allow('').default(''),
   building: Joi.string().trim().max(50).allow('').default(''),
   note: Joi.string().trim().max(200).allow('').default(''),
@@ -115,8 +138,22 @@ const normalizeMeetings = (meetings, periods) => {
       });
     }
 
+    /**
+     * Buổi một lần: thứ suy ra từ ngày, không tin vào dayOfWeek client gửi lên.
+     * Lưới lịch xếp theo dayOfWeek nên buổi thi vẫn nằm đúng cột mà phần vẽ lưới
+     * không cần biết có hai loại buổi.
+     */
+    const repeats = m.repeats !== false;
+    const date = repeats ? null : new Date(m.date);
+    const dayOfWeek = repeats ? m.dayOfWeek : jsDayToVn(date.getDay());
+
     out.push({
-      dayOfWeek: m.dayOfWeek,
+      dayOfWeek,
+      repeats,
+      date,
+      /* Buổi lặp không mang tên riêng; buổi một lần không có ngày nghỉ */
+      label: repeats ? '' : (m.label || '').trim(),
+      skipDates: repeats ? (m.skipDates || []).map((d) => new Date(d)) : [],
       startTime,
       endTime,
       campus: m.campus || '',
@@ -139,6 +176,22 @@ const findConflicts = (newMeetings, existingCourses, skipId = null) => {
 
       for (const em of course.meetings) {
         if (em.dayOfWeek !== nm.dayOfWeek) continue;
+
+        /**
+         * Buổi một lần chỉ đè lên buổi khác nếu rơi vào ĐÚNG ngày đó.
+         *
+         * Không lọc thì buổi thi sáng 12/04 sẽ báo trùng với mọi buổi Thứ Bảy
+         * của cả học kỳ — một cảnh báo đúng về mặt thứ nhưng sai về thực tế, và
+         * cảnh báo sai vài lần là người dùng thôi đọc chúng.
+         */
+        const sameDay = (a, b) => {
+          if (a.repeats !== false && b.repeats !== false) return true;
+          if (a.repeats === false && b.repeats === false) {
+            return new Date(a.date).toDateString() === new Date(b.date).toDateString();
+          }
+          return true;
+        };
+        if (!sameDay(nm, em)) continue;
 
         const overlap =
           toMinutes(nm.startTime) < toMinutes(em.endTime) &&
@@ -175,6 +228,8 @@ const detectAllConflicts = (courses, periods) => {
         courseId: String(c._id),
         name: c.courseName,
         dayOfWeek: m.dayOfWeek,
+        repeats: m.repeats !== false,
+        date: m.date || null,
         start: toMinutes(m.startTime),
         end: toMinutes(m.endTime),
         startTime: m.startTime,
@@ -192,6 +247,15 @@ const detectAllConflicts = (courses, periods) => {
       const b = slots[j];
       if (a.dayOfWeek !== b.dayOfWeek) continue;
       if (a.courseId === b.courseId) continue;
+
+      /**
+       * Hai buổi một lần chỉ đè nhau nếu rơi vào ĐÚNG cùng ngày. Không lọc thì
+       * buổi thi 12/04 báo trùng với mọi buổi Thứ Bảy của cả học kỳ — đúng về
+       * thứ nhưng sai về thực tế, và cảnh báo sai vài lần là người dùng thôi đọc.
+       */
+      if (!a.repeats && !b.repeats) {
+        if (new Date(a.date).toDateString() !== new Date(b.date).toDateString()) continue;
+      }
       if (a.start >= b.end || b.start >= a.end) continue;
 
       // Một cặp môn trùng nhiều buổi chỉ báo một lần cho mỗi ngày
