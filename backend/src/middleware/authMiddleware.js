@@ -43,7 +43,7 @@ export const protect = async (req, res, next) => {
     // Bỏ bớt các mảng nặng, không cần cho mỗi request
     const user = await User.findById(decoded.id)
       .select('-friends -blockedUsers')
-      .populate('university', 'name shortName slug city');
+      .populate('university');
 
     if (!user) {
       return res.status(401).json({

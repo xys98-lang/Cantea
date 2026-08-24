@@ -24,8 +24,14 @@ const meetingSchema = new mongoose.Schema(
       required: true,
       validate: { validator: isValidTime, message: 'Giờ kết thúc không hợp lệ' },
     },
-    /** Mã cơ sở, khớp với University.campuses[].code */
-    campus: { type: String, trim: true, uppercase: true, maxlength: 20, default: '' },
+    /**
+     * Mã cơ sở của trường, hoặc tên do sinh viên tự đặt.
+     *
+     * Không ép viết hoa: trường tự điền nhận cả tên có dấu như "Bình Dương".
+     * Chỗ hiển thị tra mã trong danh sách cơ sở của trường, không thấy thì trả
+     * về chính chuỗi đó — nên tên tự đặt tự động hiện đúng, không cần trường riêng.
+     */
+    campus: { type: String, trim: true, maxlength: 60, default: '' },
     room: { type: String, trim: true, maxlength: 50, default: '' },
     building: { type: String, trim: true, maxlength: 50, default: '' },
     note: { type: String, trim: true, maxlength: 200, default: '' },

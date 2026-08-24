@@ -3,8 +3,10 @@ import {
   ActivityIndicator,
   Alert,
   KeyboardAvoidingView,
+  Modal,
   Platform,
   Pressable,
+  TextInput,
   ScrollView,
   StyleSheet,
   Text,
@@ -22,6 +24,7 @@ import {
   searchCourses,
   DAYS,
 } from '../src/api/schedule';
+import { useAuth } from '../src/store/auth';
 import { useTheme, useThemedStyles } from '../src/store/theme';
 import { shadow } from '../src/theme';
 
@@ -40,6 +43,7 @@ export default function CourseEdit() {
   const s = useThemedStyles(styles);
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const { user } = useAuth();
   const { id, day, period } = useLocalSearchParams();
   const isEdit = Boolean(id);
 
@@ -51,6 +55,13 @@ export default function CourseEdit() {
   const [meetings, setMeetings] = useState([emptyMeeting(day, period)]);
   const [periods, setPeriods] = useState([]);
   const [campuses, setCampuses] = useState([]);
+
+  /**
+   * Bảng chọn cơ sở mở cho MỘT buổi, nên phải nhớ đang sửa buổi nào. Dùng null
+   * làm trạng thái đóng thay vì cờ boolean riêng — một biến thì không có cách
+   * nào rơi vào trạng thái mở mà không biết mở cho ai.
+   */
+  const [campusFor, setCampusFor] = useState(null);
 
   /**
    * Gợi ý lớp học phần. Chỉ bật khi thêm mới — lúc sửa thì sinh viên
@@ -160,6 +171,13 @@ export default function CourseEdit() {
     setPickedFrom(item);
     setSuggestions([]);
   };
+
+  /**
+   * Tra mã trong danh sách cơ sở của trường; không thấy thì trả về chính chuỗi đó.
+   * Nhờ vậy tên sinh viên tự gõ hiện đúng mà không cần trường dữ liệu riêng.
+   */
+  const campusLabel = (value) =>
+    campuses.find((c) => c.code === value)?.name || value || '';
 
   const patchMeeting = (idx, patch) =>
     setMeetings((ms) => ms.map((m, i) => (i === idx ? { ...m, ...patch } : m)));
@@ -405,28 +423,74 @@ export default function CourseEdit() {
             </ScrollView>
 
             {/*
-              Chọn cơ sở chỉ hiện khi trường có nhiều hơn một. Trường một
-              cơ sở thì dòng này chỉ là nhiễu.
+              Ô cơ sở luôn hiện, kể cả trường chỉ có một cơ sở hoặc chưa xác thực:
+              sinh viên vẫn có thể tự đặt tên nơi học. Trước đây là hàng chip cứng
+              nên ai không thuộc danh sách thì không có cách nào ghi lại.
             */}
-            {campuses.length > 1 && (
-              <>
-                <Text style={s.chipLabel}>Cơ sở</Text>
-                <View style={s.chipRow}>
-                  {campuses.map((c) => (
-                    <Pressable
-                      key={c.code}
-                      onPress={() =>
-                        patchMeeting(idx, { campus: m.campus === c.code ? '' : c.code })
-                      }
-                      style={[s.chip, m.campus === c.code && s.chipOn]}
-                    >
-                      <Text style={[s.chipText, m.campus === c.code && s.chipTextOn]}>
-                        {c.name}
-                      </Text>
-                    </Pressable>
-                  ))}
-                </View>
-              </>
+            <View style={s.campusHead}>
+              <Text style={s.chipLabel}>Cơ sở</Text>
+              <Text style={s.optional}>— không bắt buộc</Text>
+            </View>
+            <TextInput
+              value={campusLabel(m.campus)}
+              onChangeText={(v) => {
+                patchMeeting(idx, { campus: v });
+                setCampusFor(idx);
+              }}
+              onFocus={() => setCampusFor(idx)}
+              placeholder="Chọn hoặc gõ tên cơ sở"
+              placeholderTextColor={t.colors.icon}
+              maxLength={60}
+              style={s.campusInput}
+            />
+
+            {/*
+              Gợi ý nằm ngay dưới ô, không phải bảng trượt lên từ đáy màn hình —
+              bảng đó bị bàn phím che mất đúng ô đang gõ.
+
+              Chỉ hiện khi ô đang được gõ VÀ có mục khớp. Không khớp gì thì im lặng:
+              chữ trong ô đã là tên tự đặt rồi, không cần thêm nút xác nhận.
+            */}
+            {campusFor === idx &&
+              Boolean((m.campus || '').trim()) &&
+              (() => {
+                const q = (m.campus || '').trim().toLowerCase();
+                const hits = campuses.filter(
+                  (c) =>
+                    c.name.toLowerCase().includes(q) ||
+                    (c.address || '').toLowerCase().includes(q) ||
+                    (c.code || '').toLowerCase().includes(q)
+                );
+                if (!hits.length) return null;
+                return (
+                  <View style={s.suggestBox}>
+                    {hits.map((c) => (
+                      <Pressable
+                        key={c.code}
+                        onPress={() => {
+                          patchMeeting(idx, { campus: c.code });
+                          setCampusFor(null);
+                        }}
+                        style={s.suggestRow}
+                      >
+                        <View style={{ flex: 1 }}>
+                          <Text style={s.suggestName}>{c.name}</Text>
+                          {Boolean(c.address) && (
+                            <Text style={s.suggestAddr} numberOfLines={1}>
+                              {c.address}
+                            </Text>
+                          )}
+                        </View>
+                      </Pressable>
+                    ))}
+                  </View>
+                );
+              })()}
+
+            {campuses.length === 0 && (
+              <Text style={s.campusHint}>
+                Xác thực email trường để thấy danh sách cơ sở có sẵn.
+              </Text>
             )}
 
             {/* Phòng và toà nhà đều không bắt buộc — nhiều trường chỉ có một toà */}
@@ -472,6 +536,7 @@ export default function CourseEdit() {
           </Pressable>
         )}
       </ScrollView>
+
     </KeyboardAvoidingView>
   );
 }
@@ -548,6 +613,37 @@ const styles = (t) =>
   pickedText: { ...t.type.caption, fontSize: 11.5, color: t.colors.inkBody, flex: 1 },
 
   chipLabel: { ...t.type.micro, color: t.colors.inkMuted, marginTop: t.spacing.sm, marginBottom: 6 },
+
+  campusHead: { flexDirection: 'row', alignItems: 'baseline', gap: 6 },
+  optional: { ...t.type.caption, fontSize: 11, color: t.colors.inkMuted },
+  campusInput: {
+    ...t.type.label,
+    color: t.colors.ink,
+    borderWidth: 1,
+    borderColor: t.colors.line,
+    borderRadius: t.radius.md,
+    paddingHorizontal: t.spacing.md,
+    height: 44,
+  },
+  campusHint: { ...t.type.caption, fontSize: 11, color: t.colors.inkMuted, marginTop: 5 },
+  suggestBox: {
+    borderWidth: 1,
+    borderColor: t.colors.line,
+    borderTopWidth: 0,
+    borderBottomLeftRadius: t.radius.md,
+    borderBottomRightRadius: t.radius.md,
+    backgroundColor: t.colors.surface,
+    marginTop: -1,
+    overflow: 'hidden',
+  },
+  suggestRow: {
+    paddingHorizontal: t.spacing.md,
+    paddingVertical: 10,
+    borderTopWidth: 1,
+    borderTopColor: t.colors.line,
+  },
+  suggestName: { ...t.type.label, color: t.colors.ink },
+  suggestAddr: { ...t.type.caption, fontSize: 11, color: t.colors.inkMuted, marginTop: 1 },
   chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
   chip: {
     paddingHorizontal: 12,
