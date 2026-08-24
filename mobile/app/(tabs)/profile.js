@@ -1,7 +1,7 @@
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import { Button } from '../../src/components/ui';
+import { Button, SectionHeader } from '../../src/components/ui';
 import { Screen } from '../../src/components/Screen';
 import { useAuth } from '../../src/store/auth';
 import { useTheme, useThemedStyles, THEME_OPTIONS } from '../../src/store/theme';
@@ -39,8 +39,19 @@ export default function Profile() {
   const { user, logout } = useAuth();
 
   const STATUS = statusOf(t);
-  const status = STATUS[user?.verificationStatus] || STATUS.guest;
   const uni = user?.university;
+
+  /**
+   * Đã xác thực thì huy hiệu hiện tên viết tắt của trường thay vì chữ
+   * "ĐÃ XÁC THỰC". Với người đã qua bước đó, biết mình thuộc trường nào hữu
+   * ích hơn là được nhắc lại một việc vừa làm xong. Rơi về nhãn cũ nếu trường
+   * chưa có shortName, để huy hiệu không bao giờ trống.
+   */
+  const verifiedLabel = uni?.shortName || STATUS.verified.label;
+  const status =
+    user?.verificationStatus === 'verified'
+      ? { ...STATUS.verified, label: verifiedLabel }
+      : STATUS[user?.verificationStatus] || STATUS.guest;
   const initials = (user?.firstName || '?').charAt(0).toUpperCase();
 
   const signOut = async () => {
@@ -162,7 +173,14 @@ export default function Profile() {
         })}
       </View>
 
-      <View style={s.card}>
+      <SectionHeader
+        title="Hồ sơ"
+        actionLabel="Sửa"
+        onAction={() => router.push('/profile-edit')}
+        style={{ marginTop: t.spacing.lg }}
+      />
+
+      <View style={[s.card, { marginTop: 0 }]}>
         <Row label="Biệt danh" value={user?.nickname} />
         <Row label="Trường" value={uni?.name || uni?.shortName} />
         <Row label="Ngành" value={user?.major} />

@@ -398,7 +398,7 @@ export default function ScheduleScreen() {
 
       <ScrollView
         // Hàng ngày là phần tử đầu tiên nên nó dính lại khi cuộn
-        stickyHeaderIndices={empty ? undefined : [0]}
+        stickyHeaderIndices={[0]}
         contentContainerStyle={{ paddingBottom: t.spacing.xxl }}
         refreshControl={
           <RefreshControl
@@ -411,7 +411,11 @@ export default function ScheduleScreen() {
           />
         }
       >
-        {!empty && dayRow}
+        {/*
+          Hàng ngày hiện cả khi chưa có môn nào: người mở tab Lịch lần đầu cần
+          thấy ngay đây là một tuần học, thay vì một màn hình chỉ có hai nút.
+        */}
+        {dayRow}
 
         <View style={{ paddingHorizontal: t.spacing.screen }}>
           {Boolean(error) && (
@@ -420,22 +424,12 @@ export default function ScheduleScreen() {
             </Callout>
           )}
 
-          {empty ? (
-            <>
-              <EmptyState
-                title="Chưa có môn nào"
-                line="Nhập nhanh từ cổng trường, hoặc thêm tay từng môn."
-                actionLabel="Nhập từ cổng trường"
-                onAction={() => router.push('/schedule-import')}
-              />
-              <Button
-                title="Thêm tay từng môn"
-                variant="ghost"
-                onPress={() => router.push('/course-edit')}
-              />
-            </>
-          ) : (
-            <>
+          {/*
+            Luôn dựng lưới, kể cả khi chưa có môn nào. Một khung tuần trống nói
+            ngay cho người mới rằng đây là chỗ để xếp lịch — màn hình chỉ có hai
+            nút thì không nói được điều đó, và họ phải bấm mới biết mình sắp thấy gì.
+          */}
+          <>
               {/* ===== Lưới ===== */}
               <View style={s.grid}>
                 <View style={{ width: PERIOD_W }}>
@@ -599,13 +593,28 @@ export default function ScheduleScreen() {
                 ))
               )}
 
-              <Button
-                title="Nhập từ cổng trường"
-                variant="ghost"
-                onPress={() => router.push('/schedule-import')}
-              />
-            </>
-          )}
+              {empty ? (
+                <>
+                  <Divider style={{ marginTop: t.spacing.lg }} />
+                  <EmptyState
+                    title="Chưa có môn nào"
+                    line="Nhập nhanh từ cổng trường"
+                    onAction={() => router.push('/schedule-import')}
+                  />
+                  <Button
+                    title="Thêm tay từng môn"
+                    variant="ghost"
+                    onPress={() => router.push('/course-edit')}
+                  />
+                </>
+              ) : (
+                <Button
+                  title="Nhập từ cổng trường"
+                  variant="ghost"
+                  onPress={() => router.push('/schedule-import')}
+                />
+              )}
+          </>
         </View>
       </ScrollView>
     </View>
