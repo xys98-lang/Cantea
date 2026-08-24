@@ -12,6 +12,7 @@ import {
 } from '../utils/serializers.js';
 import TrendingCache from '../models/TrendingCache.js';
 import { logger } from '../utils/logger.js';
+import { isModerator, postViewError } from '../utils/postAccess.js';
 
 const MAX_LIMIT = 30;
 
@@ -81,45 +82,8 @@ const createCommentSchema = Joi.object({
   parentComment: Joi.string().hex().length(24).allow(null).default(null),
 });
 
-const isModerator = (user) =>
-  (user.roles || []).some((r) => r === 'admin' || r === 'moderator');
-
 const badId = (res) =>
   res.status(400).json({ status: 'error', code: 'INVALID_ID', message: 'ID không hợp lệ' });
-
-const userUniversityId = (user) => String(user.university?._id || user.university || '');
-
-/**
- * Kiểm tra quyền đọc một bài viết.
- *
- * Bài toàn quốc: ai đăng nhập cũng đọc được, kể cả chưa xác thực.
- * Bài của trường: bắt buộc đã xác thực VÀ đúng trường đó.
- *
- * Trả null nếu được phép, hoặc object lỗi nếu không.
- */
-const postAccessError = (post, user) => {
-  if (post.communityType !== 'university') return null;
-
-  if (user.verificationStatus !== 'verified') {
-    return {
-      status: 403,
-      code: 'UNIVERSITY_VERIFICATION_REQUIRED',
-      message: 'Bạn cần xác thực email trường để xem nội dung này',
-      currentStatus: user.verificationStatus,
-    };
-  }
-
-  const postUni = String(post.university?._id || post.university || '');
-  if (userUniversityId(user) !== postUni) {
-    return {
-      status: 403,
-      code: 'WRONG_UNIVERSITY',
-      message: 'Nội dung này chỉ dành cho sinh viên trường khác',
-    };
-  }
-
-  return null;
-};
 
 /**
  * GET /api/community/feed
@@ -212,6 +176,13 @@ export const getFeed = async (req, res) => {
   } else {
     [posts, total] = await Promise.all([
       Post.find(filter)
+        /**
+         * Phải xin '+author' vì Post.author để select:false. Thiếu nó thì đoạn tra
+         * tên tác giả bên dưới tìm theo mảng rỗng: mọi bài công khai hiện thành
+         * "Người dùng đã xoá", isMine luôn sai nên nút xoá bài của chính mình
+         * không hiện. Nhánh 'hot' không dính vì aggregate không đi qua projection.
+         */
+        .select('+author')
         .sort({ isPinned: -1, createdAt: -1 })
         .skip((page - 1) * limit)
         .limit(limit)
@@ -386,7 +357,7 @@ export const getPost = async (req, res) => {
     });
   }
 
-  const denied = postAccessError(post, req.user);
+  const denied = postViewError(post, req.user);
   if (denied) {
     return res.status(denied.status).json({ status: 'error', ...denied });
   }
@@ -437,7 +408,7 @@ export const getPost = async (req, res) => {
 export const togglePostLike = async (req, res) => {
   if (!mongoose.isValidObjectId(req.params.id)) return badId(res);
 
-  const post = await Post.findOne({ _id: req.params.id, isDeleted: false });
+  const post = await Post.findOne({ _id: req.params.id, isDeleted: false }).select('+author');
   if (!post) {
     return res.status(404).json({
       status: 'error',
@@ -446,7 +417,7 @@ export const togglePostLike = async (req, res) => {
     });
   }
 
-  const denied = postAccessError(post, req.user);
+  const denied = postViewError(post, req.user);
   if (denied) return res.status(denied.status).json({ status: 'error', ...denied });
 
   const already = await Post.exists({ _id: post._id, likes: req.user._id });
@@ -507,7 +478,7 @@ export const getComments = async (req, res) => {
   const page = Math.max(1, parseInt(req.query.page, 10) || 1);
   const limit = Math.min(MAX_LIMIT, parseInt(req.query.limit, 10) || 20);
 
-  const post = await Post.findOne({ _id: req.params.id, isDeleted: false });
+  const post = await Post.findOne({ _id: req.params.id, isDeleted: false }).select('+author');
   if (!post) {
     return res.status(404).json({
       status: 'error',
@@ -517,7 +488,7 @@ export const getComments = async (req, res) => {
   }
 
   // Không được để lọt: bình luận của bài trường cũng phải chặn như bài
-  const denied = postAccessError(post, req.user);
+  const denied = postViewError(post, req.user);
   if (denied) return res.status(denied.status).json({ status: 'error', ...denied });
 
   const filter = { post: post._id, parentComment: null };
@@ -593,7 +564,7 @@ export const createComment = async (req, res) => {
     });
   }
 
-  const denied = postAccessError(post, req.user);
+  const denied = postViewError(post, req.user);
   if (denied) return res.status(denied.status).json({ status: 'error', ...denied });
 
   if (value.parentComment) {
@@ -703,9 +674,9 @@ export const toggleCommentLike = async (req, res) => {
     });
   }
 
-  const post = await Post.findById(comment.post);
+  const post = await Post.findById(comment.post).select('+author');
   if (post) {
-    const denied = postAccessError(post, req.user);
+    const denied = postViewError(post, req.user);
     if (denied) return res.status(denied.status).json({ status: 'error', ...denied });
   }
 

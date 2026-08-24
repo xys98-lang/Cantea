@@ -38,7 +38,13 @@ export const getTrending = async (req, res) => {
    * thứ tự trả về sẽ cho bảng xếp hạng lộn xộn.
    */
   const ids = cache.ranking.map((r) => r.post);
-  const posts = await Post.find({ _id: { $in: ids }, isDeleted: false })
+  /**
+   * Lọc isApproved ở đây chứ không chỉ dựa vào lúc tính bảng xếp hạng: bảng được
+   * tính sẵn và giữ 20 phút, nên một bài vừa bị ẩn do báo cáo vẫn nằm trong bản
+   * đã tính. Không lọc lại thì bài đã biến khỏi bảng tin vẫn đứng hạng cao ở màn
+   * Đang nổi suốt tới lần tính kế tiếp — đúng chỗ dễ thấy nhất.
+   */
+  const posts = await Post.find({ _id: { $in: ids }, isDeleted: false, isApproved: true })
     .populate('author', 'nickname profilePhoto')
     .populate('university', 'shortName')
     .populate('topic', 'title emoji')

@@ -22,6 +22,7 @@ import messageRoutes from './routes/messageRoutes.js';
 import listingRoutes from './routes/listingRoutes.js';
 import domainRequestRoutes from './routes/domainRequestRoutes.js';
 import trendingRoutes from './routes/trendingRoutes.js';
+import reportRoutes from './routes/reportRoutes.js';
 
 // Import middleware
 import { errorHandler } from './middleware/errorHandler.js';
@@ -67,6 +68,7 @@ app.use('/api/messages', messageRoutes);
 app.use('/api/listings', listingRoutes);
 app.use('/api/domain-requests', domainRequestRoutes);
 app.use('/api/trending', trendingRoutes);
+app.use('/api/reports', reportRoutes);
 
 // Health check
 app.get('/api/health', (req, res) => {
