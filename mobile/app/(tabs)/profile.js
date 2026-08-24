@@ -99,6 +99,24 @@ export default function Profile() {
         <Ionicons name="chevron-forward" size={16} color={t.colors.icon} />
       </Pressable>
 
+      {/*
+        Chỉ hiện với người có quyền. Không dùng cách ẩn bằng giao diện rồi để
+        endpoint tự chặn: người thường thấy một dòng bấm vào là báo lỗi thì tưởng
+        app hỏng, còn ở đây không thấy gì cả là đúng — nó không dành cho họ.
+      */}
+      {(user?.roles || []).some((r) => r === 'moderator' || r === 'admin') && (
+        <Pressable onPress={() => router.push('/moderation')} style={s.savedRow}>
+          <View style={s.savedIcon}>
+            <Ionicons name="shield-outline" size={17} color={t.colors.ink} />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={s.savedTitle}>Hàng chờ kiểm duyệt</Text>
+            <Text style={s.savedLine}>Bài bị báo cáo đang chờ xử lý</Text>
+          </View>
+          <Ionicons name="chevron-forward" size={16} color={t.colors.icon} />
+        </Pressable>
+      )}
+
       <Pressable onPress={() => router.push('/my-posts')} style={s.savedRow}>
         <View style={s.savedIcon}>
           <Ionicons name="document-text-outline" size={17} color={t.colors.ink} />

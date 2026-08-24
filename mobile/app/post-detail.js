@@ -63,9 +63,16 @@ export default function PostDetail() {
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState('');
+  /**
+   * Giữ riêng mã lỗi, không chỉ câu thông báo. POST_UNDER_REVIEW không phải một
+   * lỗi để hiện dòng đỏ — nó là một trạng thái có màn hình riêng, và phân biệt
+   * được hai thứ đó thì cần mã chứ không phải chuỗi tiếng Việt.
+   */
+  const [errorCode, setErrorCode] = useState('');
 
   const load = useCallback(async () => {
     setError('');
+    setErrorCode('');
     try {
       const [p, c] = await Promise.all([fetchPost(id), fetchComments(id)]);
       setPost(p);
@@ -73,6 +80,7 @@ export default function PostDetail() {
       fetchCollections().then(setCollections).catch(() => {});
     } catch (e) {
       setError(e.message || 'Không tải được bài viết');
+      setErrorCode(e.code || '');
     } finally {
       setLoading(false);
     }
@@ -198,6 +206,37 @@ export default function PostDetail() {
     return (
       <View style={s.center}>
         <ActivityIndicator color={t.colors.accent} />
+      </View>
+    );
+  }
+
+  /**
+   * Bài bị ẩn chờ xem xét có màn riêng, không phải một dòng lỗi đỏ.
+   *
+   * Người mở link vào đây thường không biết chuyện gì đã xảy ra. Một dòng "bạn
+   * không có quyền" khiến họ nghĩ mình bị chặn; nói rõ bài đang được xem xét và
+   * tạm ẩn không đồng nghĩa vi phạm thì đúng với sự thật hơn.
+   */
+  if (errorCode === 'POST_UNDER_REVIEW') {
+    return (
+      <View style={[s.reviewWrap, { paddingTop: insets.top + t.spacing.md }]}>
+        <Pressable onPress={() => router.back()} hitSlop={8} style={s.reviewBack}>
+          <Ionicons name="chevron-back" size={22} color={t.colors.ink} />
+        </Pressable>
+
+        <View style={s.reviewBody}>
+          <Ionicons name="shield-outline" size={26} color={t.colors.inkMuted} />
+          <Text style={s.reviewTitle}>Bài này đang được xem xét</Text>
+          <Text style={s.reviewLine}>
+            Bài đã tạm ẩn khỏi bảng tin sau khi có nhiều người báo cáo. Người kiểm
+            duyệt sẽ quyết định trong thời gian sớm nhất.
+          </Text>
+          <Text style={s.reviewNote}>Tạm ẩn không có nghĩa là bài vi phạm.</Text>
+
+          <Pressable onPress={() => router.replace('/(tabs)/community')} style={s.reviewBtn}>
+            <Text style={s.reviewBtnText}>Về bảng tin</Text>
+          </Pressable>
+        </View>
       </View>
     );
   }
@@ -567,6 +606,31 @@ const styles = (t) =>
     padding: t.spacing.lg,
     paddingBottom: t.spacing.xl,
   },
+  reviewWrap: { flex: 1, backgroundColor: t.colors.bg, paddingHorizontal: t.spacing.screen },
+  reviewBack: { alignSelf: 'flex-start', paddingVertical: 4 },
+  reviewBody: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingBottom: 60 },
+  reviewTitle: { ...t.type.heading, fontSize: 18, color: t.colors.ink, marginTop: t.spacing.md },
+  reviewLine: {
+    ...t.type.body,
+    color: t.colors.inkBody,
+    textAlign: 'center',
+    marginTop: t.spacing.sm,
+  },
+  reviewNote: {
+    ...t.type.caption,
+    color: t.colors.inkMuted,
+    textAlign: 'center',
+    marginTop: t.spacing.md,
+  },
+  reviewBtn: {
+    backgroundColor: t.colors.accent,
+    borderRadius: t.radius.md,
+    paddingHorizontal: 28,
+    paddingVertical: 13,
+    marginTop: t.spacing.xl,
+  },
+  reviewBtnText: { ...t.type.label, color: t.colors.onAccent },
+
   actRow: {
     flexDirection: 'row',
     alignItems: 'center',
