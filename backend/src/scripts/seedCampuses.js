@@ -1,142 +1,79 @@
+import 'dotenv/config';
 import mongoose from 'mongoose';
-import dotenv from 'dotenv';
-import University from '../models/University.js';
-
-dotenv.config();
 
 /**
- * CƠ SỞ VÀ THỜI GIAN DI CHUYỂN
+ * Nạp danh sách cơ sở cho các trường chưa có.
  *
- * Dữ liệu này chạy một tính năng mà không hệ thống nào của trường có:
- * cảnh báo khi hai buổi học liền nhau nằm ở hai cơ sở không đi kịp.
- * Cổng đăng ký học phần chỉ kiểm tra trùng giờ, không biết hai phòng
- * cách nhau bao xa.
+ * Chạy khô mặc định, thêm --apply mới ghi. Chỉ đụng vào trường đang có mảng
+ * campuses rỗng — trường nào đã điền tay thì bỏ qua, để script chạy lại nhiều
+ * lần không ghi đè công sức nhập liệu.
  *
- * Con số phút KHÔNG phải khoảng cách thật — nó là ngưỡng cảnh báo, đã
- * cộng thời gian gửi xe, đi bộ và tìm phòng. Chỉnh xuống nếu sinh viên
- * thấy báo động giả quá nhiều.
+ * Địa chỉ dùng tên phường sau sắp xếp hành chính 2025, khớp cách ghi của dữ
+ * liệu OU và UEH đã có sẵn.
  */
+const APPLY = process.argv.includes('--apply');
 
-const UEH = {
-  /**
-   * ĐÃ XÁC NHẬN từ dữ liệu thật trên daotao.ueh.edu.vn:
-   *   Khu B1 — 279 Nguyễn Tri Phương, Phường Diên Hồng
-   *
-   * CHƯA XÁC NHẬN: các khu còn lại và địa chỉ. Cách kiểm: tra vài lớp
-   * học phần trên cổng đào tạo, mã khu nằm trong ngoặc cuối cột Lịch học.
-   */
-  travelMinutes: 30,
-  list: [
-    { code: 'A', name: 'Khu A', address: '59C Nguyễn Đình Chiểu, Quận 3, TP.HCM' },
-    { code: 'B1', name: 'Khu B1', address: '279 Nguyễn Tri Phương, Phường Diên Hồng, TP.HCM' },
-    { code: 'B2', name: 'Khu B2', address: '' },
-    { code: 'N', name: 'Khu N', address: '' },
-    { code: 'V', name: 'Khu V', address: '' },
+const DATA = {
+  HCMUT: [
+    { code: 'LTK', name: 'Lý Thường Kiệt', address: '268 Lý Thường Kiệt, Phường Diên Hồng, TP.HCM' },
+    { code: 'DA', name: 'Dĩ An', address: 'Khu phố Tân Lập, Phường Đông Hòa, TP.HCM' },
   ],
-  travel: [{ from: 'A', to: 'B1', minutes: 30 }],
-};
-
-const OU = {
-  /**
-   * Nguồn: ou.edu.vn/cac-co-so-dao-tao
-   *
-   * Chỉ đưa vào các cơ sở trong TP.HCM. Các cơ sở ở Bình Dương, Đồng Nai
-   * và Khánh Hòa không thể học liền buổi với cơ sở nội thành, nên cảnh
-   * báo di chuyển ở đó không có ý nghĩa — và đưa vào chỉ làm dài thêm
-   * dải chọn mà sinh viên phải lướt qua.
-   */
-  travelMinutes: 45,
-  list: [
-    {
-      code: 'VVT',
-      name: 'Võ Văn Tần',
-      address: '97 Võ Văn Tần, Phường Xuân Hòa, TP.HCM',
-    },
-    {
-      code: 'HHH',
-      name: 'Hồ Hảo Hớn',
-      address: '35–37 Hồ Hảo Hớn, Phường Cầu Ông Lãnh, TP.HCM',
-    },
-    {
-      code: 'ND',
-      name: 'Nhơn Đức',
-      address: 'Khu dân cư Nhơn Đức, xã Hiệp Phước, TP.HCM',
-    },
-    {
-      code: 'MTL',
-      name: 'Mai Thị Lựu',
-      address: '02 Mai Thị Lựu, Phường Tân Định, TP.HCM',
-    },
-    {
-      code: 'GP',
-      name: 'Gia Phú',
-      address: '311 Gia Phú, Phường Bình Tiên, TP.HCM',
-    },
+  HCMUS: [
+    { code: 'NVC', name: 'Nguyễn Văn Cừ', address: '227 Nguyễn Văn Cừ, Phường Chợ Quán, TP.HCM' },
+    { code: 'LT', name: 'Linh Trung', address: 'Khu đô thị ĐHQG TP.HCM, Phường Đông Hòa, TP.HCM' },
   ],
-  /**
-   * Đây là lý do phải có bảng theo cặp thay vì một con số chung.
-   *
-   * Ba cơ sở nội thành nằm sát nhau — Võ Văn Tần, Hồ Hảo Hớn và Mai Thị
-   * Lựu đều trong bán kính 2km, đi 15 phút là tới. Nhưng Nhơn Đức ở Nhà
-   * Bè cách trung tâm khoảng 20km, giờ cao điểm mất cả tiếng.
-   *
-   * Lấy một con số cho cả hai thì hoặc bỏ sót cặp xa, hoặc báo động giả
-   * với cặp gần — cả hai đều khiến sinh viên thôi tin vào cảnh báo.
-   */
-  travel: [
-    { from: 'VVT', to: 'HHH', minutes: 15 },
-    { from: 'VVT', to: 'MTL', minutes: 15 },
-    { from: 'HHH', to: 'MTL', minutes: 15 },
-    { from: 'VVT', to: 'ND', minutes: 60 },
-    { from: 'HHH', to: 'ND', minutes: 55 },
-    { from: 'MTL', to: 'ND', minutes: 60 },
-    { from: 'VVT', to: 'GP', minutes: 30 },
-    { from: 'HHH', to: 'GP', minutes: 25 },
-    { from: 'ND', to: 'GP', minutes: 50 },
+  USSH: [
+    { code: 'DTH', name: 'Đinh Tiên Hoàng', address: '10-12 Đinh Tiên Hoàng, Phường Sài Gòn, TP.HCM' },
+    { code: 'LX', name: 'Linh Xuân', address: 'Khu phố 33, Phường Linh Xuân, TP.HCM' },
+  ],
+  HUTECH: [
+    { code: 'DBP', name: 'Điện Biên Phủ', address: '475A Điện Biên Phủ, Phường Thạnh Mỹ Tây, TP.HCM' },
+    { code: 'UVK', name: 'Ung Văn Khiêm', address: '31/36 Ung Văn Khiêm, Phường Thạnh Mỹ Tây, TP.HCM' },
+    { code: 'TD', name: 'Thủ Đức', address: 'Phân khu Đào tạo E1, Khu Công nghệ cao, Phường Tăng Nhơn Phú, TP.HCM' },
+    { code: 'HTP', name: 'Hitech Park', address: 'Lô E2b-4, Đường D1, Khu Công nghệ cao, Phường Tăng Nhơn Phú, TP.HCM' },
+  ],
+  VLU: [
+    { code: 'DTT', name: 'Đặng Thùy Trâm', address: '69/68 Đặng Thùy Trâm, Phường Bình Lợi Trung, TP.HCM' },
+    { code: 'PVT', name: 'Phan Văn Trị', address: '233A Phan Văn Trị, Phường Bình Lợi Trung, TP.HCM' },
+    { code: 'NKN', name: 'Nguyễn Khắc Nhu', address: '45 Nguyễn Khắc Nhu, Phường Cầu Ông Lãnh, TP.HCM' },
   ],
 };
 
-const CAMPUSES = { ueh: UEH, ou: OU };
-
-const seed = async () => {
-  try {
-    await mongoose.connect(process.env.MONGODB_URI);
-    console.log('✅ Đã kết nối MongoDB');
-
-    for (const [slug, data] of Object.entries(CAMPUSES)) {
-      const uni = await University.findOne({ slug });
-      if (!uni) {
-        console.log(`⚠️  Không tìm thấy trường "${slug}" — chạy seedData.js trước`);
-        continue;
-      }
-
-      uni.campuses = data.list;
-      uni.campusTravelMinutes = data.travelMinutes;
-      uni.campusTravel = data.travel || [];
-      await uni.save();
-
-      console.log(`\n✅ ${uni.shortName}: ${data.list.length} cơ sở`);
-      data.list.forEach((c) =>
-        console.log(
-          `   ${c.code.padEnd(4)} ${c.name.padEnd(14)} ${c.address || '(chưa có địa chỉ)'}`
-        )
-      );
-
-      if (data.travel?.length) {
-        console.log(`   Thời gian di chuyển (${data.travel.length} cặp đã khai):`);
-        data.travel.forEach((t) =>
-          console.log(`     ${t.from} ↔ ${t.to}: ${t.minutes} phút`)
-        );
-      }
-      console.log(`   Cặp chưa khai dùng mặc định ${data.travelMinutes} phút`);
-    }
-
-    await mongoose.connection.close();
-    process.exit(0);
-  } catch (error) {
-    console.error(`❌ Seed thất bại: ${error.message}`);
+async function main() {
+  const uri = process.env.MONGODB_URI || process.env.MONGO_URI;
+  if (!uri) {
+    console.error('Khong tim thay MONGODB_URI trong backend/.env');
     process.exit(1);
   }
-};
 
-seed();
+  await mongoose.connect(uri);
+  const col = mongoose.connection.db.collection('universities');
+
+  let willWrite = 0;
+  for (const [shortName, campuses] of Object.entries(DATA)) {
+    const u = await col.findOne({ shortName });
+    if (!u) {
+      console.log(`BO QUA  ${shortName.padEnd(8)} khong co trong DB`);
+      continue;
+    }
+    const has = (u.campuses || []).length;
+    if (has > 0) {
+      console.log(`BO QUA  ${shortName.padEnd(8)} da co ${has} co so`);
+      continue;
+    }
+    console.log(`SE THEM ${shortName.padEnd(8)} ${campuses.length} co so`);
+    campuses.forEach((c) => console.log(`          ${c.code.padEnd(5)} ${c.address}`));
+    willWrite++;
+
+    if (APPLY) await col.updateOne({ _id: u._id }, { $set: { campuses } });
+  }
+
+  console.log(APPLY ? `\nDa ghi ${willWrite} truong.` : `\nChay kho. Them --apply de ghi ${willWrite} truong.`);
+  await mongoose.disconnect();
+}
+
+main().catch(async (e) => {
+  console.error(e);
+  await mongoose.disconnect().catch(() => {});
+  process.exit(1);
+});
