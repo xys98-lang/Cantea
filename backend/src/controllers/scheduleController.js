@@ -379,6 +379,104 @@ const decorate = (course, periods) => {
 
 // ===== HANDLERS =====
 
+/** Thứ Hai của tuần chứa ngày này, đặt về 00:00 để so ngày không dính giờ */
+const mondayOf = (d) => {
+  const x = new Date(d);
+  x.setHours(0, 0, 0, 0);
+  // getDay(): 0 = CN. Lùi về Thứ Hai: CN lùi 6, còn lại lùi (day - 1)
+  x.setDate(x.getDate() - (x.getDay() === 0 ? 6 : x.getDay() - 1));
+  return x;
+};
+
+const addDays = (d, n) => {
+  const x = new Date(d);
+  x.setDate(x.getDate() + n);
+  return x;
+};
+
+const sameDay = (a, b) =>
+  a && b && new Date(a).toDateString() === new Date(b).toDateString();
+
+/**
+ * Khoảng thời gian buổi lặp có hiệu lực.
+ *
+ * Đặt mốc học kỳ rồi thì dùng mốc đó. Chưa đặt thì neo vào ngày sinh viên nhập
+ * môn sớm nhất, kéo dài ba tháng — mốc cố định nên xem lại tuần cũ vẫn đúng,
+ * khác với việc đếm từ hôm nay vốn trôi theo từng ngày.
+ */
+const termRange = (user, courses) => {
+  const t = user.term || {};
+  if (t.startDate && t.endDate) {
+    return { start: new Date(t.startDate), end: new Date(t.endDate), isSet: true };
+  }
+
+  const stamps = [];
+  courses.forEach((c) => {
+    stamps.push(new Date(c.createdAt));
+    (c.meetings || []).forEach((m) => {
+      if (m.repeats === false && m.date) stamps.push(new Date(m.date));
+    });
+  });
+
+  const start = stamps.length ? new Date(Math.min(...stamps)) : new Date();
+  start.setHours(0, 0, 0, 0);
+  const end = new Date(start);
+  end.setMonth(end.getMonth() + 3);
+  return { start, end, isSet: false };
+};
+
+/**
+ * Bung thời khoá biểu thành các buổi THẬT của một tuần cụ thể.
+ *
+ * Tính ở backend chứ không để mobile tự làm: nhắc lịch bằng thông báo chạy lúc
+ * app đóng, mũi tên chuyển tuần và mốc học kỳ đều cần đúng phép tính này. Ba
+ * bản sao của cùng một quy tắc thì sớm muộn cũng lệch nhau.
+ */
+const buildWeek = (courses, periods, monday, range) => {
+  const days = [];
+
+  for (let i = 0; i < 7; i += 1) {
+    const date = addDays(monday, i);
+    const vnDay = jsDayToVn(date.getDay());
+    const items = [];
+
+    courses.forEach((c) => {
+      (c.meetings || []).forEach((m) => {
+        const isOneOff = m.repeats === false;
+
+        if (isOneOff) {
+          if (!sameDay(m.date, date)) return;
+        } else {
+          if (m.dayOfWeek !== vnDay) return;
+          if (date < range.start || date > range.end) return;
+          if ((m.skipDates || []).some((sd) => sameDay(sd, date))) return;
+        }
+
+        items.push({
+          courseId: String(c._id),
+          meetingId: String(m._id),
+          name: m.label || c.courseName,
+          courseName: c.courseName,
+          instructor: c.instructor,
+          color: c.color,
+          room: m.room,
+          building: m.building,
+          campus: m.campus,
+          startTime: m.startTime,
+          endTime: m.endTime,
+          periods: timeToPeriods(periods, m.startTime, m.endTime),
+          repeats: !isOneOff,
+        });
+      });
+    });
+
+    items.sort((a, b) => toMinutes(a.startTime) - toMinutes(b.startTime));
+    days.push({ date: date.toISOString().slice(0, 10), dayOfWeek: vnDay, items });
+  }
+
+  return days;
+};
+
 export const getSchedule = async (req, res) => {
   const periods = resolvePeriods(req.user);
   const filter = { student: req.user._id, isArchived: false };
@@ -388,10 +486,42 @@ export const getSchedule = async (req, res) => {
 
   const courses = await Schedule.find(filter).sort({ createdAt: 1 });
 
+  /**
+   * Tham số week là một ngày bất kỳ trong tuần muốn xem; không truyền thì lấy
+   * tuần hiện tại. Nhờ vậy màn lịch cũ chưa biết gì về tuần vẫn gọi được như cũ.
+   */
+  const anchor = req.query.week ? new Date(req.query.week) : new Date();
+  const monday = mondayOf(Number.isNaN(anchor.getTime()) ? new Date() : anchor);
+  const range = termRange(req.user, courses);
+
+  const prevMonday = addDays(monday, -7);
+  const nextMonday = addDays(monday, 7);
+
   res.status(200).json({
     status: 'success',
     data: {
+      /** Giữ lại để các màn đang dùng không gãy trong lúc chuyển đổi */
       courses: courses.map((c) => decorate(c, periods)),
+
+      week: {
+        monday: monday.toISOString().slice(0, 10),
+        days: buildWeek(courses, periods, monday, range),
+        /**
+         * Mũi tên tắt khi cả tuần nằm ngoài học kỳ. So với Thứ Hai và Chủ nhật
+         * của tuần đích chứ không so với chính mốc — tuần chứa ngày kết thúc vẫn
+         * phải xem được, dù phần lớn tuần đó đã hết học kỳ.
+         */
+        canGoPrev: addDays(prevMonday, 6) >= range.start,
+        canGoNext: nextMonday <= range.end,
+      },
+
+      term: {
+        startDate: range.start.toISOString().slice(0, 10),
+        endDate: range.end.toISOString().slice(0, 10),
+        /** false thì mobile hiện dòng nhắc đặt mốc học kỳ */
+        isSet: range.isSet,
+      },
+
       periods,
       timeDisplay: req.user.preferences?.timeDisplay || 'period',
       conflicts: [
