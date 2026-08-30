@@ -379,13 +379,40 @@ const decorate = (course, periods) => {
 
 // ===== HANDLERS =====
 
+/**
+ * Đọc "YYYY-MM-DD" theo giờ ĐỊA PHƯƠNG.
+ *
+ * new Date('2026-09-01') được chuẩn JS đọc là nửa đêm UTC, tức 7 giờ sáng giờ
+ * Việt Nam — nhưng với chuỗi có thêm giờ thì lại đọc theo giờ máy. Trộn hai lối
+ * đọc trong cùng một phép tính là chỗ sinh ra lệch đúng một ngày.
+ */
+const parseLocalDate = (v) => {
+  if (v instanceof Date) return new Date(v);
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(v));
+  if (m) return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+  return new Date(v);
+};
+
 /** Thứ Hai của tuần chứa ngày này, đặt về 00:00 để so ngày không dính giờ */
 const mondayOf = (d) => {
-  const x = new Date(d);
+  const x = parseLocalDate(d);
   x.setHours(0, 0, 0, 0);
   // getDay(): 0 = CN. Lùi về Thứ Hai: CN lùi 6, còn lại lùi (day - 1)
   x.setDate(x.getDate() - (x.getDay() === 0 ? 6 : x.getDay() - 1));
   return x;
+};
+
+/**
+ * Đổi Date sang "YYYY-MM-DD" theo giờ ĐỊA PHƯƠNG.
+ *
+ * toISOString() luôn quy về UTC, nên nửa đêm giờ Việt Nam thành 17 giờ hôm
+ * trước và ngày bị lùi một. Đây là bẫy thứ hai của cùng một vấn đề múi giờ:
+ * đọc chuỗi thành Date đã sửa rồi, nhưng chiều ngược lại thì chưa.
+ */
+const ymd = (d) => {
+  const x = new Date(d);
+  const p2 = (n) => String(n).padStart(2, '0');
+  return `${x.getFullYear()}-${p2(x.getMonth() + 1)}-${p2(x.getDate())}`;
 };
 
 const addDays = (d, n) => {
@@ -410,13 +437,14 @@ const termRange = (user, courses) => {
     return { start: new Date(t.startDate), end: new Date(t.endDate), isSet: true };
   }
 
-  const stamps = [];
-  courses.forEach((c) => {
-    stamps.push(new Date(c.createdAt));
-    (c.meetings || []).forEach((m) => {
-      if (m.repeats === false && m.date) stamps.push(new Date(m.date));
-    });
-  });
+  /**
+   * Chỉ neo vào ngày NHẬP môn, không tính buổi một lần.
+   *
+   * Một buổi thi đặt lùi về tháng trước sẽ kéo mốc bắt đầu học kỳ về tận đó, và
+   * học kỳ ba tháng tính từ đấy có thể kết thúc trước cả hôm nay — lịch trống
+   * trơn mà không ai hiểu vì sao.
+   */
+  const stamps = courses.map((c) => new Date(c.createdAt));
 
   const start = stamps.length ? new Date(Math.min(...stamps)) : new Date();
   start.setHours(0, 0, 0, 0);
@@ -471,7 +499,7 @@ const buildWeek = (courses, periods, monday, range) => {
     });
 
     items.sort((a, b) => toMinutes(a.startTime) - toMinutes(b.startTime));
-    days.push({ date: date.toISOString().slice(0, 10), dayOfWeek: vnDay, items });
+    days.push({ date: ymd(date), dayOfWeek: vnDay, items });
   }
 
   return days;
@@ -490,7 +518,7 @@ export const getSchedule = async (req, res) => {
    * Tham số week là một ngày bất kỳ trong tuần muốn xem; không truyền thì lấy
    * tuần hiện tại. Nhờ vậy màn lịch cũ chưa biết gì về tuần vẫn gọi được như cũ.
    */
-  const anchor = req.query.week ? new Date(req.query.week) : new Date();
+  const anchor = req.query.week ? parseLocalDate(req.query.week) : new Date();
   const monday = mondayOf(Number.isNaN(anchor.getTime()) ? new Date() : anchor);
   const range = termRange(req.user, courses);
 
@@ -504,7 +532,17 @@ export const getSchedule = async (req, res) => {
       courses: courses.map((c) => decorate(c, periods)),
 
       week: {
-        monday: monday.toISOString().slice(0, 10),
+        monday: ymd(monday),
+        /**
+         * Số thứ tự tuần trong học kỳ, null khi chưa đặt mốc.
+         *
+         * "Tuần 3" nói được nhiều hơn "31/8 – 6/9": sinh viên nhớ mình đang ở
+         * tuần mấy chứ ít khi nhớ ngày. Tính ở backend để màn khác dùng lại,
+         * và để mốc học kỳ chỉ có một cách hiểu duy nhất.
+         */
+        index: range.isSet
+          ? Math.floor((monday - mondayOf(range.start)) / (7 * 86400000)) + 1
+          : null,
         days: buildWeek(courses, periods, monday, range),
         /**
          * Mũi tên tắt khi cả tuần nằm ngoài học kỳ. So với Thứ Hai và Chủ nhật
@@ -516,8 +554,8 @@ export const getSchedule = async (req, res) => {
       },
 
       term: {
-        startDate: range.start.toISOString().slice(0, 10),
-        endDate: range.end.toISOString().slice(0, 10),
+        startDate: ymd(range.start),
+        endDate: ymd(range.end),
         /** false thì mobile hiện dòng nhắc đặt mốc học kỳ */
         isSet: range.isSet,
       },

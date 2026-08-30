@@ -130,7 +130,20 @@ export default function ScheduleScreen() {
   const insets = useSafeAreaInsets();
 
   const today = jsDayToVn(new Date().getDay());
-  const monday = useMemo(() => mondayOf(new Date()), []);
+  /**
+   * Thứ Hai của tuần đang xem, do BACKEND quyết định.
+   *
+   * Trước đây tính tại chỗ nên luôn là tuần hiện tại. Giờ nó là state để mũi
+   * tên đổi được, và lấy từ phản hồi API để mobile với backend không bao giờ
+   * bất đồng về việc "tuần này bắt đầu từ ngày nào".
+   */
+  const [weekAnchor, setWeekAnchor] = useState(null);
+  const [week, setWeek] = useState(null);
+  const [term, setTerm] = useState(null);
+  const monday = useMemo(
+    () => (week?.monday ? mondayOf(week.monday) : mondayOf(new Date())),
+    [week]
+  );
 
   const [courses, setCourses] = useState([]);
   const [periods, setPeriods] = useState([]);
@@ -145,8 +158,10 @@ export default function ScheduleScreen() {
   const load = useCallback(async () => {
     setError('');
     try {
-      const data = await fetchSchedule();
+      const data = await fetchSchedule(weekAnchor);
       setCourses(data.courses || []);
+      setWeek(data.week || null);
+      setTerm(data.term || null);
       setPeriods(data.periods || []);
       setConflicts(data.conflicts || []);
       setCampuses(data.campuses || []);
@@ -176,7 +191,7 @@ export default function ScheduleScreen() {
       setLoading(false);
       setRefreshing(false);
     }
-  }, []);
+  }, [weekAnchor]);
 
   useFocusEffect(
     useCallback(() => {
@@ -194,15 +209,28 @@ export default function ScheduleScreen() {
     }
   };
 
+  /**
+   * Mọi buổi THẬT của tuần đang xem, đã bung từ buổi lặp và bỏ ngày nghỉ.
+   *
+   * Bốn phép tính bên dưới đều đọc từ đây thay vì từ courses. courses chỉ còn
+   * dùng để biết lịch có trống hoàn toàn hay không, và để xếp lời nhắc — thứ
+   * cần cả học kỳ chứ không phải một tuần.
+   */
+  const weekItems = useMemo(() => {
+    const out = [];
+    (week?.days || []).forEach((d) =>
+      (d.items || []).forEach((it) => out.push({ ...it, dayOfWeek: d.dayOfWeek, date: d.date }))
+    );
+    return out;
+  }, [week]);
+
   const weekendSlots = useMemo(() => {
     const map = { 7: 0, 8: 0 };
-    courses.forEach((c) =>
-      (c.meetings || []).forEach((m) => {
-        if (m.dayOfWeek >= 7) map[m.dayOfWeek] += 1;
-      })
-    );
+    weekItems.forEach((m) => {
+      if (m.dayOfWeek >= 7) map[m.dayOfWeek] += 1;
+    });
     return map;
-  }, [courses]);
+  }, [weekItems]);
 
   /**
    * Thứ 7 và Chủ nhật chỉ hiện khi tuần thực sự có buổi rơi vào đó.
@@ -216,25 +244,23 @@ export default function ScheduleScreen() {
 
   const visiblePeriods = useMemo(() => {
     if (!periods.length) return [];
-    if (!courses.length) return periods.slice(0, 9);
+    if (!weekItems.length) return periods.slice(0, 9);
 
     let min = periods.length - 1;
     let max = 0;
 
-    courses.forEach((c) =>
-      (c.meetings || []).forEach((m) => {
-        const st = toMinutes(m.startTime);
-        const en = toMinutes(m.endTime);
-        periods.forEach((p, i) => {
-          if (toMinutes(p.start) <= st && st < toMinutes(p.end)) min = Math.min(min, i);
-          if (toMinutes(p.start) < en && en <= toMinutes(p.end)) max = Math.max(max, i);
-        });
-      })
-    );
+    weekItems.forEach((m) => {
+      const st = toMinutes(m.startTime);
+      const en = toMinutes(m.endTime);
+      periods.forEach((p, i) => {
+        if (toMinutes(p.start) <= st && st < toMinutes(p.end)) min = Math.min(min, i);
+        if (toMinutes(p.start) < en && en <= toMinutes(p.end)) max = Math.max(max, i);
+      });
+    });
 
     if (min > max) return periods.slice(0, 9);
     return periods.slice(Math.max(0, min), Math.min(periods.length, max + 1));
-  }, [periods, courses]);
+  }, [periods, weekItems]);
 
   const conflictIds = useMemo(() => {
     const set = new Set();
@@ -271,24 +297,22 @@ export default function ScheduleScreen() {
     };
 
     const byDay = {};
-    courses.forEach((course) => {
-      const id = String(course.id || course._id);
-      (course.meetings || []).forEach((m) => {
-        const dayIdx = days.findIndex((d) => d.value === m.dayOfWeek);
-        if (dayIdx === -1) return;
+    weekItems.forEach((m) => {
+      const dayIdx = days.findIndex((d) => d.value === m.dayOfWeek);
+      if (dayIdx === -1) return;
 
-        const from = rowStart(toMinutes(m.startTime));
-        const to = Math.max(from, rowEnd(toMinutes(m.endTime)));
+      const from = rowStart(toMinutes(m.startTime));
+      const to = Math.max(from, rowEnd(toMinutes(m.endTime)));
 
-        (byDay[dayIdx] ||= []).push({
-          key: `${id}-${m._id || `${m.dayOfWeek}${m.startTime}`}`,
-          courseId: id,
-          name: course.courseCode || course.courseName,
-          room: m.room,
-          row: from,
-          span: to - from + 1,
-          conflicted: conflictIds.has(id),
-        });
+      (byDay[dayIdx] ||= []).push({
+        key: `${m.courseId}-${m.meetingId}-${m.date}`,
+        courseId: m.courseId,
+        /* Buổi một lần dùng tên riêng nếu có; buổi lặp dùng mã môn cho gọn cột */
+        name: m.repeats === false ? m.name : m.courseName || m.name,
+        room: m.room,
+        row: from,
+        span: to - from + 1,
+        conflicted: conflictIds.has(m.courseId),
       });
     });
 
@@ -296,7 +320,7 @@ export default function ScheduleScreen() {
       byDay[k] = assignLanes(byDay[k]);
     });
     return byDay;
-  }, [courses, visiblePeriods, conflictIds]);
+  }, [weekItems, days, visiblePeriods, conflictIds]);
 
   const campusName = useCallback(
     (code) => campuses.find((c) => c.code === code)?.name || code,
@@ -304,25 +328,21 @@ export default function ScheduleScreen() {
   );
 
   const daySchedule = useMemo(() => {
-    const items = [];
-    courses.forEach((c) =>
-      (c.meetings || []).forEach((m) => {
-        if (m.dayOfWeek !== selectedDay) return;
-        items.push({
-          courseId: String(c.id || c._id),
-          name: c.courseName,
-          instructor: c.instructor,
-          room: m.room,
-          building: m.building,
-          campus: m.campus,
-          startTime: m.startTime,
-          endTime: m.endTime,
-          periods: m.periods,
-        });
-      })
-    );
+    const items = weekItems
+      .filter((m) => m.dayOfWeek === selectedDay)
+      .map((m) => ({
+        courseId: m.courseId,
+        name: m.name,
+        instructor: m.instructor,
+        room: m.room,
+        building: m.building,
+        campus: m.campus,
+        startTime: m.startTime,
+        endTime: m.endTime,
+        periods: m.periods,
+      }));
     return items.sort((a, b) => toMinutes(a.startTime) - toMinutes(b.startTime));
-  }, [courses, selectedDay]);
+  }, [weekItems, selectedDay]);
 
   /** Chạm vào ô trống trên lưới để thêm môn ngay tại chỗ đó */
   const addAt = (dayIdx, periodIdx) => {
@@ -372,12 +392,71 @@ export default function ScheduleScreen() {
     );
   }
 
+  /**
+   * Đổi tuần bằng cách đặt lại mốc neo rồi để load() gọi backend.
+   *
+   * Không tự cộng trừ ngày ở đây: phép tính tuần nằm ở backend, và mobile tính
+   * lại một bản riêng là mở đường cho hai bên lệch nhau khi có thêm ngày lễ hay
+   * tuần nghỉ sau này.
+   */
+  const shiftWeek = (dir) => {
+    const x = new Date(monday);
+    x.setDate(x.getDate() + dir * 7);
+    const p2 = (n) => String(n).padStart(2, '0');
+    setWeekAnchor(`${x.getFullYear()}-${p2(x.getMonth() + 1)}-${p2(x.getDate())}`);
+  };
+
   const selectedDate = dateOfVnDay(monday, selectedDay);
   const empty = courses.length === 0;
 
   /** Hàng ngày — được ghim nhờ stickyHeaderIndices */
   const dayRow = (
     <View style={s.dayHeadWrap}>
+      <View style={s.weekNav}>
+        <Pressable
+          onPress={() => shiftWeek(-1)}
+          disabled={week ? !week.canGoPrev : false}
+          hitSlop={8}
+          style={week && !week.canGoPrev && s.navOff}
+        >
+          <Ionicons name="chevron-back" size={19} color={t.colors.ink} />
+        </Pressable>
+
+        <Pressable onPress={() => setWeekAnchor(null)} style={{ flex: 1 }}>
+          {/*
+            Đặt mốc học kỳ rồi thì hiện số tuần; chưa đặt thì rơi về khoảng ngày,
+            vì "Tuần 3" tính từ một mốc tạm sẽ là con số không có thật.
+          */}
+          <Text style={s.weekLabel} numberOfLines={1}>
+            {week?.index
+              ? `Tuần ${week.index}`
+              : `${monday.getDate()}/${monday.getMonth() + 1} – ${dateOfVnDay(monday, 8).getDate()}/${dateOfVnDay(monday, 8).getMonth() + 1}`}
+          </Text>
+        </Pressable>
+
+        <Pressable
+          onPress={() => shiftWeek(1)}
+          disabled={week ? !week.canGoNext : false}
+          hitSlop={8}
+          style={week && !week.canGoNext && s.navOff}
+        >
+          <Ionicons name="chevron-forward" size={19} color={t.colors.ink} />
+        </Pressable>
+      </View>
+
+      {/*
+        Nhắc đặt mốc học kỳ, không chặn gì. Chưa đặt thì lịch vẫn dùng được với
+        khoảng tạm tính ba tháng — nhưng mũi tên sẽ dừng ở một mốc mà người dùng
+        không hiểu vì sao, nên phải nói ra.
+      */}
+      {term && !term.isSet && (
+        <Pressable onPress={() => router.push('/schedule-settings')} style={s.termHint}>
+          <Text style={s.termHintText}>
+            Chưa đặt mốc học kỳ — đang tạm tính 3 tháng. Đặt ngay →
+          </Text>
+        </Pressable>
+      )}
+
       <View style={s.dayHeadRow}>
         <View style={{ width: PERIOD_W }} />
         <ScrollView
@@ -715,6 +794,23 @@ const styles = (t) =>
     borderBottomWidth: 1,
     borderBottomColor: t.colors.line,
   },
+  weekNav: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: t.spacing.md,
+    paddingBottom: t.spacing.sm,
+  },
+  navOff: { opacity: 0.25 },
+  weekLabel: { ...t.type.label, color: t.colors.ink, textAlign: 'center' },
+  termHint: {
+    backgroundColor: t.colors.fill,
+    borderRadius: t.radius.md,
+    paddingHorizontal: t.spacing.md,
+    paddingVertical: 7,
+    marginBottom: t.spacing.sm,
+  },
+  termHintText: { ...t.type.caption, fontSize: 11.5, color: t.colors.inkBody },
+
   dayHeadRow: { flexDirection: 'row' },
   dayHead: { alignItems: 'center' },
   dayShort: { ...t.type.captionStrong, color: t.colors.inkMuted },

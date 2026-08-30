@@ -1,8 +1,20 @@
 import client from './client';
 
-export const fetchSchedule = () => client.get('/schedule').then((r) => r.data.data);
+/**
+ * @param week ngày bất kỳ trong tuần muốn xem, dạng "YYYY-MM-DD".
+ *             Bỏ trống thì backend trả về tuần hiện tại.
+ */
+export const fetchSchedule = (week) =>
+  client.get('/schedule', { params: week ? { week } : {} }).then((r) => r.data.data);
 
 export const fetchToday = () => client.get('/schedule/today').then((r) => r.data.data);
+export const fetchTerm = () => client.get('/schedule/term').then((r) => r.data.data);
+
+/** Truyền null cho cả hai để xoá mốc, quay về khoảng tạm tính */
+export const saveTerm = (startDate, endDate) =>
+  client.put('/schedule/term', { startDate, endDate }).then((r) => r.data.data);
+
+
 
 export const createCourse = (payload) =>
   client.post('/schedule', payload).then((r) => r.data.data);
