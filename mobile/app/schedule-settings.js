@@ -16,6 +16,8 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { Button, Notice, Rule } from '../src/components/ui';
 import {
+  fetchTerm,
+  saveTerm,
   fetchPeriods,
   savePeriods,
   resetPeriods,
@@ -49,6 +51,50 @@ const TimeInput = ({ value, onChange, style }) => {
       keyboardType="number-pad"
       maxLength={5}
       style={[s.timeInput, bad && { borderColor: t.colors.alert }, style]}
+    />
+  );
+};
+
+/** "07/09/2026" -> Date theo giờ địa phương, null nếu không hợp lệ */
+const parseVnDate = (v) => {
+  const m = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(v || '');
+  if (!m) return null;
+  const d = new Date(Number(m[3]), Number(m[2]) - 1, Number(m[1]));
+  return d.getDate() === Number(m[1]) && d.getMonth() === Number(m[2]) - 1 ? d : null;
+};
+
+/**
+ * Đổi Date sang "YYYY-MM-DD" theo giờ ĐỊA PHƯƠNG. toISOString() quy về UTC nên
+ * nửa đêm giờ Việt Nam thành 17 giờ hôm trước và ngày bị lùi một.
+ */
+const toYmd = (d) => {
+  const p2 = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}`;
+};
+
+/** Ô nhập ngày dd/mm/yyyy, tự chèn dấu gạch khi gõ */
+const DateInput = ({ value, onChange }) => {
+  const t = useTheme();
+  const s = useThemedStyles(styles);
+
+  const handle = (raw) => {
+    const d = raw.replace(/\D/g, '').slice(0, 8);
+    if (d.length <= 2) onChange(d);
+    else if (d.length <= 4) onChange(`${d.slice(0, 2)}/${d.slice(2)}`);
+    else onChange(`${d.slice(0, 2)}/${d.slice(2, 4)}/${d.slice(4)}`);
+  };
+
+  const bad = value.length === 10 && !parseVnDate(value);
+
+  return (
+    <TextInput
+      value={value}
+      onChangeText={handle}
+      placeholder="07/09/2026"
+      placeholderTextColor={t.colors.inkMuted}
+      keyboardType="number-pad"
+      maxLength={10}
+      style={[s.timeInput, { width: 128 }, bad && { borderColor: t.colors.alert }]}
     />
   );
 };
@@ -88,6 +134,11 @@ export default function ScheduleSettings() {
   const insets = useSafeAreaInsets();
 
   const [tab, setTab] = useState('quick');
+
+  const [termStart, setTermStart] = useState('');
+  const [termWeeks, setTermWeeks] = useState(15);
+  const [termSet, setTermSet] = useState(false);
+  const [termSaving, setTermSaving] = useState(false);
   const [sessions, setSessions] = useState([]);
   const [periods, setPeriods] = useState([]);
   const [isCustom, setIsCustom] = useState(false);
