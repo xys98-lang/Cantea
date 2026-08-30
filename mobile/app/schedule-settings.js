@@ -159,9 +159,28 @@ export default function ScheduleSettings() {
     }
   }, []);
 
+  const loadTerm = useCallback(async () => {
+    try {
+      const d = await fetchTerm();
+      setTermSet(Boolean(d.isSet));
+      if (d.startDate) {
+        const x = new Date(d.startDate);
+        const p2 = (n) => String(n).padStart(2, '0');
+        setTermStart(`${p2(x.getDate())}/${p2(x.getMonth() + 1)}/${x.getFullYear()}`);
+        if (d.endDate) {
+          const w = Math.round((new Date(d.endDate) - x) / (7 * 86400000));
+          if (w >= 1 && w <= 30) setTermWeeks(w);
+        }
+      }
+    } catch {
+      /* Không chặn cả màn cài đặt chỉ vì phần học kỳ tải hỏng */
+    }
+  }, []);
+
   useFocusEffect(
     useCallback(() => {
       load();
+      loadTerm();
     }, [load])
   );
 
@@ -299,6 +318,74 @@ export default function ScheduleSettings() {
         <Text style={s.intro}>
           Mỗi trường có giờ vào tiết khác nhau. Chỉnh ở đây để lịch của bạn hiện đúng.
         </Text>
+
+        <Text style={s.termHead}>Học kỳ</Text>
+        <Text style={s.termIntro}>
+          Cho lịch biết tuần nào là tuần đầu, và học tới bao giờ. Bỏ trống thì lịch
+          tạm tính 3 tháng.
+        </Text>
+
+        <View style={s.termRow}>
+          <Text style={s.termLabel}>Bắt đầu</Text>
+          <DateInput value={termStart} onChange={setTermStart} />
+        </View>
+
+        <View style={s.termRow}>
+          <Text style={s.termLabel}>Số tuần</Text>
+          <NumStepper value={termWeeks} onChange={setTermWeeks} min={1} max={30} suffix=" tuần" />
+        </View>
+
+        {Boolean(parseVnDate(termStart)) && (
+          <Text style={s.termEnd}>
+            Kết thúc:{' '}
+            {(() => {
+              const e = new Date(parseVnDate(termStart));
+              e.setDate(e.getDate() + termWeeks * 7 - 1);
+              return `${e.getDate()}/${e.getMonth() + 1}/${e.getFullYear()}`;
+            })()}
+          </Text>
+        )}
+
+        <View style={{ flexDirection: 'row', gap: 8, marginTop: t.spacing.md }}>
+          <Button
+            title={termSaving ? 'Đang lưu…' : 'Lưu học kỳ'}
+            onPress={async () => {
+              const start = parseVnDate(termStart);
+              if (!start) return Alert.alert('Chưa đúng', 'Nhập ngày bắt đầu dạng 07/09/2026');
+              const end = new Date(start);
+              end.setDate(end.getDate() + termWeeks * 7 - 1);
+              setTermSaving(true);
+              try {
+                await saveTerm(toYmd(start), toYmd(end));
+                setTermSet(true);
+                Alert.alert('Đã lưu', 'Lịch sẽ hiện theo tuần của học kỳ này.');
+              } catch (e) {
+                Alert.alert('Không lưu được', e.message || 'Thử lại sau');
+              } finally {
+                setTermSaving(false);
+              }
+            }}
+            style={{ flex: 1 }}
+          />
+          {termSet && (
+            <Button
+              title="Xoá mốc"
+              variant="ghost"
+              onPress={async () => {
+                try {
+                  await saveTerm(null, null);
+                  setTermSet(false);
+                  setTermStart('');
+                } catch (e) {
+                  Alert.alert('Không xoá được', e.message || 'Thử lại sau');
+                }
+              }}
+              style={{ flex: 1 }}
+            />
+          )}
+        </View>
+
+        <Rule style={{ marginTop: t.spacing.xl, marginBottom: t.spacing.md }} />
 
         <View style={s.segment}>
           <Pressable
@@ -530,6 +617,17 @@ const styles = (t) =>
   },
   rowLast: { borderBottomWidth: 0 },
   rowLabel: { ...t.type.caption, color: t.colors.inkMuted },
+
+  termHead: { ...t.type.heading, color: t.colors.ink, marginTop: t.spacing.lg },
+  termIntro: { ...t.type.caption, color: t.colors.inkMuted, marginTop: 3, marginBottom: t.spacing.md },
+  termRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: t.spacing.sm,
+  },
+  termLabel: { ...t.type.label, color: t.colors.inkBody },
+  termEnd: { ...t.type.caption, color: t.colors.inkMuted, marginTop: 2 },
 
   timeInput: {
     fontFamily: t.fonts.medium,
