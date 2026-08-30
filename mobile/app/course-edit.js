@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  Switch,
   KeyboardAvoidingView,
   Modal,
   Platform,
@@ -28,7 +29,30 @@ import { useAuth } from '../src/store/auth';
 import { useTheme, useThemedStyles } from '../src/store/theme';
 import { shadow } from '../src/theme';
 
+/** "07/09/2026" -> Date theo giờ địa phương, null nếu không hợp lệ */
+const parseVnDate = (v) => {
+  const m = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(v || '');
+  if (!m) return null;
+  const d = new Date(Number(m[3]), Number(m[2]) - 1, Number(m[1]));
+  return d.getDate() === Number(m[1]) && d.getMonth() === Number(m[2]) - 1 ? d : null;
+};
+
+/**
+ * Đổi Date sang "YYYY-MM-DD" theo giờ ĐỊA PHƯƠNG.
+ *
+ * toISOString() quy về UTC nên nửa đêm giờ Việt Nam thành 17 giờ hôm trước và
+ * ngày lùi một. Buổi thi ngày 12 gửi lên thành ngày 11 mà không ai thấy sai.
+ */
+const toYmd = (d) => {
+  const p2 = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}`;
+};
+
+const DAY_NAME = { 2: 'Thứ 2', 3: 'Thứ 3', 4: 'Thứ 4', 5: 'Thứ 5', 6: 'Thứ 6', 7: 'Thứ 7', 8: 'Chủ nhật' };
+
 const emptyMeeting = (day = 2, period = 1, campus = '') => ({
+  repeats: true,
+  date: '',
   dayOfWeek: Number(day) || 2,
   fromPeriod: Number(period) || 1,
   // Mặc định 3 tiết — độ dài phổ biến nhất của một buổi học
@@ -197,7 +221,10 @@ export default function CourseEdit() {
       courseCode: form.courseCode.trim(),
       instructor: form.instructor.trim(),
       meetings: meetings.map((m) => ({
-        dayOfWeek: m.dayOfWeek,
+        /* Buổi một lần gửi ngày; backend suy thứ từ đó nên không gửi dayOfWeek */
+        ...(m.repeats === false
+          ? { repeats: false, date: toYmd(parseVnDate(m.date)) }
+          : { repeats: true, dayOfWeek: m.dayOfWeek }),
         fromPeriod: m.fromPeriod,
         toPeriod: Math.max(m.fromPeriod, m.toPeriod),
         campus: m.campus || '',
@@ -373,6 +400,52 @@ export default function CourseEdit() {
               )}
             </View>
 
+            {/*
+              Công tắc ở cấp BUỔI chứ không phải cấp môn: kỳ thi thường là buổi
+              thứ tư của một môn đã có ba buổi lặp — chung tên, chung giảng viên,
+              chỉ khác chỗ nó diễn ra đúng một lần.
+            */}
+            <View style={s.repeatRow}>
+              <View style={{ flex: 1 }}>
+                <Text style={s.repeatTitle}>Lặp hàng tuần</Text>
+                <Text style={s.repeatLine}>
+                  {m.repeats
+                    ? 'Buổi này diễn ra mỗi tuần trong học kỳ.'
+                    : 'Tắt rồi — đây là buổi thi hoặc học bù, chỉ diễn ra một lần.'}
+                </Text>
+              </View>
+              <Switch
+                value={m.repeats !== false}
+                onValueChange={(v) => patchMeeting(idx, { repeats: v })}
+                trackColor={{ true: t.colors.accent, false: t.colors.line }}
+              />
+            </View>
+
+            {m.repeats === false ? (
+              <>
+                <Text style={s.chipLabel}>Ngày</Text>
+                <TextInput
+                  value={m.date}
+                  onChangeText={(raw) => {
+                    const d = raw.replace(/\D/g, '').slice(0, 8);
+                    const out =
+                      d.length <= 2 ? d
+                        : d.length <= 4 ? `${d.slice(0, 2)}/${d.slice(2)}`
+                          : `${d.slice(0, 2)}/${d.slice(2, 4)}/${d.slice(4)}`;
+                    patchMeeting(idx, { date: out });
+                  }}
+                  placeholder="12/04/2026"
+                  placeholderTextColor={t.colors.icon}
+                  keyboardType="number-pad"
+                  maxLength={10}
+                  style={[
+                    s.dateInput,
+                    m.date.length === 10 && !parseVnDate(m.date) && { borderColor: t.colors.alert },
+                  ]}
+                />
+              </>
+            ) : (
+              <>
             <Text style={s.chipLabel}>Thứ</Text>
             <View style={s.chipRow}>
               {DAYS.map((d) => (
@@ -427,6 +500,37 @@ export default function CourseEdit() {
               sinh viên vẫn có thể tự đặt tên nơi học. Trước đây là hàng chip cứng
               nên ai không thuộc danh sách thì không có cách nào ghi lại.
             */}
+              </>
+            )}
+
+            {/*
+              Nói ngay ngày đó là thứ mấy và rơi vào tiết nào.
+              Thông báo thi ghi "13:15 ngày 12/04"; bắt sinh viên tự tra xem đó là
+              thứ mấy và tiết mấy là bắt họ làm việc mà app làm được. Nói luôn khi
+              giờ lệch đầu tiết, thay vì lặng lẽ làm tròn rồi để họ tưởng vào trễ.
+            */}
+            {m.repeats === false && Boolean(parseVnDate(m.date)) && (
+              <View style={s.convert}>
+                {(() => {
+                  const d = parseVnDate(m.date);
+                  const vnDay = d.getDay() === 0 ? 8 : d.getDay() + 1;
+                  const st = periods.find((p) => p.period === m.fromPeriod);
+                  return (
+                    <>
+                      <Text style={s.convertHead}>
+                        {DAY_NAME[vnDay]} · Tiết {m.fromPeriod}
+                        {m.toPeriod > m.fromPeriod ? ` – ${m.toPeriod}` : ''}
+                      </Text>
+                      <Text style={s.convertLine}>
+                        Theo khung tiết của bạn.
+                        {st ? ` Buổi bắt đầu lúc ${st.start}.` : ''}
+                      </Text>
+                    </>
+                  );
+                })()}
+              </View>
+            )}
+
             <View style={s.campusHead}>
               <Text style={s.chipLabel}>Cơ sở</Text>
               <Text style={s.optional}>— không bắt buộc</Text>
@@ -613,6 +717,36 @@ const styles = (t) =>
   pickedText: { ...t.type.caption, fontSize: 11.5, color: t.colors.inkBody, flex: 1 },
 
   chipLabel: { ...t.type.micro, color: t.colors.inkMuted, marginTop: t.spacing.sm, marginBottom: 6 },
+
+  repeatRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: t.spacing.md,
+    paddingVertical: t.spacing.sm,
+    borderBottomWidth: 1,
+    borderBottomColor: t.colors.line,
+    marginBottom: t.spacing.sm,
+  },
+  repeatTitle: { ...t.type.label, color: t.colors.ink },
+  repeatLine: { ...t.type.caption, fontSize: 11.5, color: t.colors.inkMuted, marginTop: 2 },
+  dateInput: {
+    ...t.type.label,
+    color: t.colors.ink,
+    borderWidth: 1,
+    borderColor: t.colors.line,
+    borderRadius: t.radius.md,
+    paddingHorizontal: t.spacing.md,
+    height: 44,
+    width: 140,
+  },
+  convert: {
+    backgroundColor: t.colors.fill,
+    borderRadius: t.radius.md,
+    padding: t.spacing.md,
+    marginTop: t.spacing.md,
+  },
+  convertHead: { ...t.type.heading, fontSize: 16, color: t.colors.ink },
+  convertLine: { ...t.type.caption, color: t.colors.inkBody, marginTop: 3 },
 
   campusHead: { flexDirection: 'row', alignItems: 'baseline', gap: 6 },
   optional: { ...t.type.caption, fontSize: 11, color: t.colors.inkMuted },
