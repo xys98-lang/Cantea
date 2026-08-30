@@ -83,6 +83,12 @@ const courseInput = Joi.object({
   color: Joi.string().trim().max(20).allow(null, ''),
   reminderEnabled: Joi.boolean().default(true),
   reminderMinutes: Joi.number().valid(0, 15, 30, 60).default(15),
+  /**
+   * Hai khoá của chế độ sửa một buổi. Khai báo hẳn ở đây thay vì cho schema bỏ
+   * qua khoá lạ — bỏ qua thì mọi lỗi gõ sai tên trường cũng lọt qua im lặng.
+   */
+  onlyDate: Joi.date().iso(),
+  meetingIndex: Joi.number().integer().min(0),
 });
 
 const periodsInput = Joi.object({
