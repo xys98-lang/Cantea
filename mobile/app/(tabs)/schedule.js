@@ -310,6 +310,10 @@ export default function ScheduleScreen() {
         /* Buổi một lần dùng tên riêng nếu có; buổi lặp dùng mã môn cho gọn cột */
         name: m.repeats === false ? m.name : m.courseName || m.name,
         room: m.room,
+        /* Mang theo để màn sửa biết đang mở cho buổi nào của ngày nào */
+        meetingId: m.meetingId,
+        date: m.date,
+        repeats: m.repeats,
         row: from,
         span: to - from + 1,
         conflicted: conflictIds.has(m.courseId),
@@ -332,6 +336,9 @@ export default function ScheduleScreen() {
       .filter((m) => m.dayOfWeek === selectedDay)
       .map((m) => ({
         courseId: m.courseId,
+        meetingId: m.meetingId,
+        date: m.date,
+        repeats: m.repeats,
         name: m.name,
         instructor: m.instructor,
         room: m.room,
@@ -615,7 +622,11 @@ export default function ScheduleScreen() {
                       return (
                         <Pressable
                           key={b.key}
-                          onPress={() => router.push(`/course-edit?id=${b.courseId}`)}
+                          onPress={() =>
+                            router.push(
+                              `/course-edit?id=${b.courseId}&date=${b.date}&meetingId=${b.meetingId}`
+                            )
+                          }
                           style={[
                             s.block,
                             {
@@ -709,7 +720,7 @@ export default function ScheduleScreen() {
                 daySchedule.map((c, i) => (
                   <Pressable
                     key={`${c.courseId}-${i}`}
-                    onPress={() => router.push(`/course-edit?id=${c.courseId}`)}
+                    onPress={() => router.push(`/course-edit?id=${c.courseId}&date=${c.date}&meetingId=${c.meetingId}`)}
                     style={s.clsRow}
                   >
                     <View style={s.clsBar} />

@@ -68,7 +68,15 @@ export default function CourseEdit() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { user } = useAuth();
-  const { id, day, period } = useLocalSearchParams();
+  const { id, day, period, date: editDate, meetingId } = useLocalSearchParams();
+
+  /**
+   * Mở từ một ô trên lưới thì mặc định chỉ sửa buổi ngày đó.
+   *
+   * Sửa nhầm một buổi thì mất một buổi; sửa nhầm cả chuỗi thì mất cả học kỳ dữ
+   * liệu và không lần lại được. Mặc định hẹp là hướng sai an toàn hơn.
+   */
+  const [applyAll, setApplyAll] = useState(false);
   const isEdit = Boolean(id);
 
   const [form, setForm] = useState({ courseName: '', courseCode: '', instructor: '' });
@@ -252,8 +260,38 @@ export default function CourseEdit() {
     }
   };
 
+  /** Mở từ lưới, công tắc đang tắt: xoá nghĩa là NGHỈ hôm đó, không mất cả chuỗi */
+  const oneOffOnly = Boolean(editDate) && !applyAll;
+
+  const confirmSkip = () => {
+    const dmy = String(editDate).split('-').reverse().join('/');
+    Alert.alert('Nghỉ buổi này?', `Buổi ngày ${dmy} sẽ không hiện trên lịch. Các tuần khác giữ nguyên.`, [
+      { text: 'Huỷ', style: 'cancel' },
+      {
+        text: 'Báo nghỉ',
+        style: 'destructive',
+        onPress: async () => {
+          const idx = meetings.findIndex((m) => String(m._id) === String(meetingId));
+          try {
+            await updateCourse(id, {
+              courseName: form.courseName.trim(),
+              courseCode: form.courseCode.trim(),
+              instructor: form.instructor.trim(),
+              meetings: [],
+              onlyDate: editDate,
+              meetingIndex: idx >= 0 ? idx : 0,
+            });
+            router.back();
+          } catch (e) {
+            setError(e.message || 'Không báo nghỉ được');
+          }
+        },
+      },
+    ]);
+  };
+
   const confirmDelete = () => {
-    Alert.alert('Xoá môn học', `Xoá "${form.courseName}" khỏi thời khoá biểu?`, [
+    Alert.alert('Xoá môn học', `Xoá "${form.courseName}" khỏi thời khoá biểu? Mất toàn bộ buổi của cả học kỳ.`, [
       { text: 'Huỷ', style: 'cancel' },
       {
         text: 'Xoá',
@@ -635,8 +673,13 @@ export default function CourseEdit() {
         </View>
 
         {isEdit && (
-          <Pressable onPress={confirmDelete} style={s.deleteBtn}>
-            <Text style={s.deleteText}>Xoá môn học</Text>
+          <Pressable
+            onPress={oneOffOnly ? confirmSkip : confirmDelete}
+            style={s.deleteBtn}
+          >
+            <Text style={s.deleteText}>
+              {oneOffOnly ? 'Nghỉ buổi này' : 'Xoá môn học'}
+            </Text>
           </Pressable>
         )}
       </ScrollView>

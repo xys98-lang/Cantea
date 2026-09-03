@@ -75,9 +75,16 @@ const courseInput = Joi.object({
   classCode: Joi.string().trim().max(30).allow('').default(''),
   instructor: Joi.string().trim().max(100).allow('').default(''),
   credits: Joi.number().min(0).max(20).allow(null).default(null),
-  meetings: Joi.array().items(meetingInput).min(1).max(10).required().messages({
-    'array.min': 'Cần ít nhất một buổi học',
-  }),
+  /**
+   * Bình thường phải có ít nhất một buổi. Riêng khi sửa một buổi lẻ thì mảng
+   * rỗng là hợp lệ và mang nghĩa "nghỉ hôm đó" — môn vẫn còn nguyên các tuần
+   * khác, nên ràng buộc "cần ít nhất một buổi" không áp ở đây.
+   */
+  /**
+   * Không đặt min(1) ở đây: khi sửa một buổi lẻ, mảng rỗng là hợp lệ và mang
+   * nghĩa "nghỉ hôm đó". Controller tự chặn mảng rỗng cho các trường hợp còn lại.
+   */
+  meetings: Joi.array().items(meetingInput).max(10).required(),
   term: Joi.string().valid('HK1', 'HK2', 'HK3').default('HK1'),
   academicYear: Joi.string().trim().max(20).allow('').default(''),
   color: Joi.string().trim().max(20).allow(null, ''),
