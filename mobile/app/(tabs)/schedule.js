@@ -618,7 +618,15 @@ export default function ScheduleScreen() {
                         * tính theo bề rộng khung cha, mà khung cha giờ rộng hơn màn
                         * hình. Dùng phần trăm thì khối môn trôi lệch khỏi cột.
                         */
-                      const laneW = COL_W / (b.lanes || 1);
+                      /**
+                        * Khối trùng giờ xếp chồng lệch phải thay vì chia đôi cột.
+                        *
+                        * Cột chỉ rộng khoảng 60 điểm ảnh; chia đôi còn 30 thì tên
+                        * môn không đọc nổi. Lệch 12 giữ được 48 điểm ảnh cho khối
+                        * dưới, vẫn thấy rõ có hai môn chồng nhau.
+                        */
+                      const OFFSET = 12;
+                      const laneW = COL_W - b.lane * OFFSET;
                       return (
                         <Pressable
                           key={b.key}
@@ -630,8 +638,10 @@ export default function ScheduleScreen() {
                           style={[
                             s.block,
                             {
-                              left: Number(dayIdx) * COL_W + b.lane * laneW,
+                              left: Number(dayIdx) * COL_W + b.lane * OFFSET,
                               width: laneW,
+                              /* Khối sau nằm trên khối trước, đúng thứ tự giờ bắt đầu */
+                              zIndex: b.lane + 1,
                               top: b.row * ROW_H + 2,
                               height: b.span * ROW_H - 5,
                             },
@@ -646,7 +656,7 @@ export default function ScheduleScreen() {
                           >
                             {b.name}
                           </Text>
-                          {Boolean(b.room) && b.lanes === 1 && (
+                          {Boolean(b.room) && b.lane === 0 && b.lanes === 1 && (
                             <Text style={s.blockRoom} numberOfLines={1}>
                               {b.room}
                             </Text>

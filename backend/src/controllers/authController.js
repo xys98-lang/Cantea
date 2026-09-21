@@ -98,7 +98,7 @@ export const login = async (req, res) => {
   // BẮT BUỘC .select('+password') vì schema đặt select: false
   const user = await User.findOne({ email })
     .select('+password')
-    .populate('university', 'name shortName slug city');
+    .populate('university', 'name shortName slug city campuses');
 
   // Trả về cùng một thông báo cho cả hai trường hợp sai email và sai mật khẩu,
   // tránh để lộ email nào đã tồn tại trong hệ thống.

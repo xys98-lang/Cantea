@@ -157,7 +157,7 @@ const normalizeMeetings = (meetings, periods) => {
      * không cần biết có hai loại buổi.
      */
     const repeats = m.repeats !== false;
-    const date = repeats ? null : new Date(m.date);
+    const date = repeats ? null : parseLocalDate(m.date);
     const dayOfWeek = repeats ? m.dayOfWeek : jsDayToVn(date.getDay());
 
     out.push({

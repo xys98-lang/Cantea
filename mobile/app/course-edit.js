@@ -127,6 +127,11 @@ export default function CourseEdit() {
               });
               setMeetings(
                 (found.meetings || []).map((m) => ({
+                  _id: m._id,
+                  repeats: m.repeats !== false,
+                  /* Cắt 10 ký tự đầu chứ không qua new Date: đổi qua Date rồi đọc
+                     lại ngày là chỗ lệch múi giờ một ngày */
+                  date: m.date ? String(m.date).slice(0, 10).split('-').reverse().join('/') : '',
                   dayOfWeek: m.dayOfWeek,
                   fromPeriod: m.periods?.fromPeriod || 1,
                   toPeriod: m.periods?.toPeriod || 1,
@@ -189,6 +194,9 @@ export default function CourseEdit() {
     });
     setMeetings(
       (item.meetings || []).map((m) => ({
+        _id: m._id,
+        repeats: m.repeats !== false,
+        date: m.date ? String(m.date).slice(0, 10).split('-').reverse().join('/') : '',
         dayOfWeek: m.dayOfWeek,
         fromPeriod: m.periods?.fromPeriod || 1,
         toPeriod: m.periods?.toPeriod || 1,
@@ -263,12 +271,21 @@ export default function CourseEdit() {
   /** Mở từ lưới, công tắc đang tắt: xoá nghĩa là NGHỈ hôm đó, không mất cả chuỗi */
   const oneOffOnly = Boolean(editDate) && !applyAll;
 
+  /** Buổi đang mở là buổi một lần thì "xoá" là xoá thật, không phải báo nghỉ */
+  const editingIsSingle =
+    meetings.find((m) => String(m._id) === String(meetingId))?.repeats === false;
+
   const confirmSkip = () => {
     const dmy = String(editDate).split('-').reverse().join('/');
-    Alert.alert('Nghỉ buổi này?', `Buổi ngày ${dmy} sẽ không hiện trên lịch. Các tuần khác giữ nguyên.`, [
+    Alert.alert(
+      editingIsSingle ? 'Xoá buổi này?' : 'Nghỉ buổi này?',
+      editingIsSingle
+        ? `Buổi ngày ${dmy} chỉ diễn ra một lần, xoá rồi không lấy lại được.`
+        : `Buổi ngày ${dmy} sẽ không hiện trên lịch. Các tuần khác giữ nguyên.`,
+      [
       { text: 'Huỷ', style: 'cancel' },
       {
-        text: 'Báo nghỉ',
+        text: editingIsSingle ? 'Xoá' : 'Báo nghỉ',
         style: 'destructive',
         onPress: async () => {
           const idx = meetings.findIndex((m) => String(m._id) === String(meetingId));
@@ -463,7 +480,7 @@ export default function CourseEdit() {
               <>
                 <Text style={s.chipLabel}>Ngày</Text>
                 <TextInput
-                  value={m.date}
+                  value={m.date || ''}
                   onChangeText={(raw) => {
                     const d = raw.replace(/\D/g, '').slice(0, 8);
                     const out =
@@ -478,7 +495,7 @@ export default function CourseEdit() {
                   maxLength={10}
                   style={[
                     s.dateInput,
-                    m.date.length === 10 && !parseVnDate(m.date) && { borderColor: t.colors.alert },
+                    (m.date || '').length === 10 && !parseVnDate(m.date) && { borderColor: t.colors.alert },
                   ]}
                 />
               </>
@@ -547,7 +564,7 @@ export default function CourseEdit() {
               thứ mấy và tiết mấy là bắt họ làm việc mà app làm được. Nói luôn khi
               giờ lệch đầu tiết, thay vì lặng lẽ làm tròn rồi để họ tưởng vào trễ.
             */}
-            {m.repeats === false && Boolean(parseVnDate(m.date)) && (
+            {m.repeats === false && Boolean(parseVnDate(m.date || '')) && (
               <View style={s.convert}>
                 {(() => {
                   const d = parseVnDate(m.date);
@@ -678,7 +695,7 @@ export default function CourseEdit() {
             style={s.deleteBtn}
           >
             <Text style={s.deleteText}>
-              {oneOffOnly ? 'Nghỉ buổi này' : 'Xoá môn học'}
+              {oneOffOnly ? (editingIsSingle ? 'Xoá buổi này' : 'Nghỉ buổi này') : 'Xoá môn học'}
             </Text>
           </Pressable>
         )}
